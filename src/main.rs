@@ -612,6 +612,54 @@ impl App {
 
 }
 
+
+/// Add system fonts with wide Unicode coverage (box drawing, symbols, Japanese/Chinese/Korean)
+/// as fallbacks, so the preview can show whatever a terminal prints. Missing files are skipped.
+fn install_fonts(ctx: &egui::Context) {
+    use egui::{FontData, FontDefinitions, FontFamily};
+    let mut defs = FontDefinitions::default();
+
+    // (name, candidate paths, face index inside a .ttc collection)
+    let candidates: &[(&str, &[&str], u32)] = &[
+        ("dejavu_mono", &["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "/usr/share/fonts/TTF/DejaVuSansMono.ttf"], 0),
+        ("noto_symbols2", &["/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf"], 0),
+        ("noto_symbols", &["/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf"], 0),
+        ("noto_cjk_mono", &["/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc"], 5),
+    ];
+
+    let mut loaded: Vec<String> = Vec::new();
+    for (name, paths, index) in candidates {
+        if let Some(bytes) = paths.iter().find_map(|p| std::fs::read(p).ok()) {
+            let mut data = FontData::from_owned(bytes);
+            data.index = *index;
+            defs.font_data.insert((*name).to_string(), data);
+            loaded.push((*name).to_string());
+        }
+    }
+    if loaded.is_empty() {
+        return;
+    }
+
+    // Monospace: DejaVu Sans Mono first (if present), then egui's own, then the symbol/CJK fallbacks.
+    let mono = defs.families.entry(FontFamily::Monospace).or_default();
+    if loaded.iter().any(|n| n == "dejavu_mono") {
+        mono.insert(0, "dejavu_mono".to_string());
+    }
+    for n in &loaded {
+        if n != "dejavu_mono" {
+            mono.push(n.clone());
+        }
+    }
+    // Proportional: keep egui's font first, add the fallbacks after it.
+    let prop = defs.families.entry(FontFamily::Proportional).or_default();
+    for n in &loaded {
+        if n != "dejavu_mono" {
+            prop.push(n.clone());
+        }
+    }
+    ctx.set_fonts(defs);
+}
+
 fn expand_home(p: &str) -> String {
     if let Some(rest) = p.strip_prefix('~') {
         if let Some(home) = std::env::var_os("HOME") {
@@ -668,6 +716,7 @@ fn main() -> eframe::Result {
         "tmux-gui",
         options,
         Box::new(|cc| {
+            install_fonts(&cc.egui_ctx);
             cc.egui_ctx.set_pixels_per_point(1.15);
             Ok(Box::new(App::default()))
         }),

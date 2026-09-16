@@ -1,20 +1,26 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod projects;
 mod tmux;
 
 use eframe::egui;
+use projects::Project;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tmux::{Session, Window};
 
 const REFRESH_EVERY: Duration = Duration::from_millis(1000);
 const RED: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
+const GREEN: egui::Color32 = egui::Color32::from_rgb(90, 190, 110);
+const START_COMMAND: &str = "claude --continue";
 
 /// The one modal dialog that can be open at a time.
 enum Dialog {
+    RenameProject { path: PathBuf, text: String },
+    RemoveProject { path: PathBuf },
     RenameSession { old: String, text: String },
     RenameWindow { session: String, index: u32, text: String },
-    NewSession { name: String, dir: String },
     NewWindow { session: String, name: String },
     KillSession(String),
     KillWindow { session: String, index: u32 },
@@ -22,19 +28,29 @@ enum Dialog {
 
 #[derive(Default)]
 struct App {
+    projects: Vec<Project>,
     sessions: Vec<Session>,
     windows: HashMap<String, Vec<Window>>,
+    /// project root (normalized) -> session name, for projects that have a running session
+    matched: HashMap<PathBuf, String>,
+
+    selected_project: Option<PathBuf>,
     selected: Option<String>,
     selected_window: Option<u32>,
     collapsed: HashSet<String>,
+
     preview: String,
+    command: String,
     last_refresh: Option<Instant>,
     dialog: Option<Dialog>,
-    command: String,
     status: Option<(String, bool)>,
 }
 
 impl App {
+    fn new() -> Self {
+        App { projects: projects::load(), ..Default::default() }
+    }
+
     // ---------- data ----------
 
     fn note(&mut self, msg: impl Into<String>) {
@@ -51,6 +67,12 @@ impl App {
         self.refresh();
     }
 
+    fn save_projects(&mut self) {
+        if let Err(e) = projects::save(&self.projects) {
+            self.fail(e);
+        }
+    }
+
     fn refresh(&mut self) {
         self.last_refresh = Some(Instant::now());
         match tmux::list_sessions() {
@@ -65,14 +87,47 @@ impl App {
             self.windows.entry(s).or_default().push(w);
         }
 
-        if let Some(sel) = &self.selected {
+        // Match sessions to projects by start folder.
+        self.matched.clear();
+        let by_path: HashMap<PathBuf, String> = self
+            .sessions
+            .iter()
+            .map(|s| (projects::normalize(std::path::Path::new(&s.path)), s.name.clone()))
+            .collect();
+        for p in &self.projects {
+            let key = projects::normalize(&p.path);
+            if let Some(name) = by_path.get(&key) {
+                self.matched.insert(key, name.clone());
+            }
+        }
+
+        // Keep the selection consistent with what exists now.
+        if let Some(pp) = &self.selected_project {
+            if self.projects.iter().any(|p| projects::normalize(&p.path) == *pp) {
+                let now = self.matched.get(pp).cloned();
+                if now != self.selected {
+                    self.selected_window = None;
+                }
+                self.selected = now;
+            } else {
+                self.selected_project = None;
+                self.selected = None;
+                self.selected_window = None;
+            }
+        } else if let Some(sel) = &self.selected {
             if !self.sessions.iter().any(|s| &s.name == sel) {
                 self.selected = None;
                 self.selected_window = None;
             }
         }
-        if self.selected.is_none() {
-            self.selected = self.sessions.first().map(|s| s.name.clone());
+        if self.selected_project.is_none() && self.selected.is_none() {
+            if let Some(p) = self.projects.first() {
+                let key = projects::normalize(&p.path);
+                self.selected = self.matched.get(&key).cloned();
+                self.selected_project = Some(key);
+            } else {
+                self.selected = self.sessions.first().map(|s| s.name.clone());
+            }
         }
         if let (Some(s), Some(w)) = (&self.selected, self.selected_window) {
             if !self.windows_of(s).iter().any(|x| x.index == w) {
@@ -95,16 +150,37 @@ impl App {
         self.sessions.iter().find(|s| s.name == name)
     }
 
-    fn select(&mut self, session: &str, window: Option<u32>) {
-        let changed = self.selected.as_deref() != Some(session) || self.selected_window != window;
-        self.selected = Some(session.to_string());
+    fn project_at(&self, key: &PathBuf) -> Option<&Project> {
+        self.projects.iter().find(|p| projects::normalize(&p.path) == *key)
+    }
+
+    fn other_sessions(&self) -> Vec<Session> {
+        let taken: HashSet<&String> = self.matched.values().collect();
+        self.sessions.iter().filter(|s| !taken.contains(&s.name)).cloned().collect()
+    }
+
+    fn select_project(&mut self, key: PathBuf, window: Option<u32>) {
+        let session = self.matched.get(&key).cloned();
+        let changed = self.selected_project.as_ref() != Some(&key) || self.selected != session || self.selected_window != window;
+        self.selected_project = Some(key);
+        self.selected = session;
         self.selected_window = window;
         if changed {
             self.refresh();
         }
     }
 
-    // ---------- actions (all go through here so menus, buttons and keys behave the same) ----------
+    fn select_session(&mut self, name: &str, window: Option<u32>) {
+        let changed = self.selected_project.is_some() || self.selected.as_deref() != Some(name) || self.selected_window != window;
+        self.selected_project = None;
+        self.selected = Some(name.to_string());
+        self.selected_window = window;
+        if changed {
+            self.refresh();
+        }
+    }
+
+    // ---------- actions ----------
 
     fn open_terminal(&mut self, session: &str, window: Option<u32>) {
         if let Some(w) = window {
@@ -119,6 +195,90 @@ impl App {
         self.apply(r, &format!("Window {index} is now active"));
     }
 
+    /// Create the project's tmux session in its folder, start Claude Code in it, open a terminal.
+    fn start_project(&mut self, key: &PathBuf) {
+        let Some(p) = self.project_at(key).cloned() else { return };
+        let mut name = p.session_name();
+        let mut n = 2;
+        while self.session(&name).is_some() {
+            name = format!("{}-{n}", p.session_name());
+            n += 1;
+        }
+        let path = p.path.to_string_lossy().into_owned();
+        let r = tmux::new_session(&name, Some(&path))
+            .and_then(|_| tmux::send_line(&name, START_COMMAND))
+            .and_then(|_| tmux::attach_in_terminal(&name));
+        if r.is_ok() {
+            self.selected_project = Some(key.clone());
+            self.selected = Some(name.clone());
+            self.selected_window = None;
+        }
+        self.apply(r, &format!("Started Claude Code in “{}”", p.name));
+    }
+
+    fn add_project_dialog(&mut self) {
+        let Some(folder) = rfd::FileDialog::new().set_title("Choose a project folder").pick_folder() else {
+            return;
+        };
+        let key = projects::normalize(&folder);
+        if self.projects.iter().any(|p| projects::normalize(&p.path) == key) {
+            self.fail("That folder is already registered");
+            return;
+        }
+        let p = Project::from_path(folder);
+        let name = p.name.clone();
+        self.projects.push(p);
+        self.save_projects();
+        self.selected_project = Some(key);
+        self.selected = None;
+        self.selected_window = None;
+        self.apply(Ok(()), &format!("Added project “{name}”"));
+    }
+
+    fn change_folder(&mut self, key: &PathBuf) {
+        let Some(folder) = rfd::FileDialog::new().set_title("Choose the project folder").pick_folder() else {
+            return;
+        };
+        let new_key = projects::normalize(&folder);
+        if let Some(p) = self.projects.iter_mut().find(|p| projects::normalize(&p.path) == *key) {
+            p.path = folder;
+        }
+        self.save_projects();
+        self.selected_project = Some(new_key);
+        self.apply(Ok(()), "Folder changed");
+    }
+
+    // ---------- menus ----------
+
+    fn project_menu(&mut self, ui: &mut egui::Ui, key: &PathBuf) {
+        let session = self.matched.get(key).cloned();
+        match &session {
+            Some(name) => {
+                self.session_menu(ui, name);
+            }
+            None => {
+                if ui.button("▶  Start Claude Code").clicked() {
+                    self.start_project(key);
+                    ui.close_menu();
+                }
+            }
+        }
+        ui.separator();
+        if ui.button("✏  Rename project…").clicked() {
+            let text = self.project_at(key).map(|p| p.name.clone()).unwrap_or_default();
+            self.dialog = Some(Dialog::RenameProject { path: key.clone(), text });
+            ui.close_menu();
+        }
+        if ui.button("📁  Change folder…").clicked() {
+            self.change_folder(key);
+            ui.close_menu();
+        }
+        if ui.button("－  Remove from list…").clicked() {
+            self.dialog = Some(Dialog::RemoveProject { path: key.clone() });
+            ui.close_menu();
+        }
+    }
+
     fn session_menu(&mut self, ui: &mut egui::Ui, name: &str) {
         let attached = self.session(name).map(|s| s.attached).unwrap_or(false);
         if ui.button("▶  Open in terminal").clicked() {
@@ -129,7 +289,7 @@ impl App {
             self.dialog = Some(Dialog::NewWindow { session: name.into(), name: String::new() });
             ui.close_menu();
         }
-        if ui.button("✏  Rename…").clicked() {
+        if self.selected_project.is_none() && ui.button("✏  Rename session…").clicked() {
             self.dialog = Some(Dialog::RenameSession { old: name.into(), text: name.into() });
             ui.close_menu();
         }
@@ -170,40 +330,148 @@ impl App {
     fn tree(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.heading("Sessions");
+            ui.heading("Projects");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("+ New session").clicked() {
-                    self.dialog = Some(Dialog::NewSession { name: String::new(), dir: String::new() });
+                if ui.button("+ Add project").clicked() {
+                    self.add_project_dialog();
                 }
             });
         });
         ui.add_space(4.0);
         ui.separator();
 
-        if self.sessions.is_empty() {
-            ui.add_space(8.0);
-            ui.label(egui::RichText::new("No tmux sessions are running.").weak());
-            ui.label(egui::RichText::new("Use “New session” to start one.").weak());
-            return;
-        }
-
-        let sessions = self.sessions.clone();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for s in &sessions {
-                self.tree_session_row(ui, s);
-                if !self.collapsed.contains(&s.name) {
-                    let wins = self.windows_of(&s.name).to_vec();
-                    for w in &wins {
-                        self.tree_window_row(ui, &s.name, w);
+            if self.projects.is_empty() {
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("No projects yet.").weak());
+                ui.label(egui::RichText::new("Use “Add project” to register a folder.").weak());
+            }
+            let projects = self.projects.clone();
+            for p in &projects {
+                let key = projects::normalize(&p.path);
+                let session = self.matched.get(&key).cloned();
+                self.tree_project_row(ui, p, &key, session.as_deref());
+                if let Some(name) = &session {
+                    if !self.collapsed.contains(name) {
+                        let wins = self.windows_of(name).to_vec();
+                        for w in &wins {
+                            self.tree_window_row(ui, name, w, Some(&key));
+                        }
                     }
                 }
                 ui.add_space(2.0);
             }
+
+            let others = self.other_sessions();
+            if !others.is_empty() {
+                ui.add_space(10.0);
+                ui.label(egui::RichText::new("Other tmux sessions").weak());
+                ui.separator();
+                for s in &others {
+                    self.tree_session_row(ui, s);
+                    if !self.collapsed.contains(&s.name) {
+                        let wins = self.windows_of(&s.name).to_vec();
+                        for w in &wins {
+                            self.tree_window_row(ui, &s.name, w, None);
+                        }
+                    }
+                    ui.add_space(2.0);
+                }
+            }
         });
     }
 
+    fn status_dot(ui: &mut egui::Ui, session: Option<&Session>) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 18.0), egui::Sense::hover());
+        let c = rect.center();
+        match session {
+            Some(s) if s.attached => {
+                ui.painter().circle_filled(c, 4.5, GREEN);
+            }
+            Some(_) => {
+                ui.painter().circle_stroke(c, 4.5, egui::Stroke::new(1.5, ui.visuals().strong_text_color()));
+            }
+            None => {
+                ui.painter().circle_stroke(c, 4.5, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
+            }
+        }
+    }
+
+    fn row_layout() -> egui::Layout {
+        egui::Layout::left_to_right(egui::Align::Center).with_main_align(egui::Align::Min).with_main_justify(true)
+    }
+
+    fn tree_project_row(&mut self, ui: &mut egui::Ui, p: &Project, key: &PathBuf, session: Option<&str>) {
+        let is_sel = self.selected_project.as_ref() == Some(key) && self.selected_window.is_none();
+        let sess = session.and_then(|n| self.session(n)).cloned();
+        let open = session.map(|n| !self.collapsed.contains(n)).unwrap_or(false);
+        let mut toggle = false;
+        let mut clicked = false;
+        let mut double = false;
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if session.is_some() {
+                let arrow = if open { "⏷" } else { "⏵" };
+                if ui.add(egui::Button::new(arrow).frame(false)).clicked() {
+                    toggle = true;
+                }
+            } else {
+                ui.add_space(20.0);
+            }
+            Self::status_dot(ui, sess.as_ref());
+            let mut text = egui::RichText::new(&p.name).strong();
+            if session.is_none() {
+                text = text.weak();
+            }
+            let hover = match &sess {
+                Some(s) => format!(
+                    "{}\n{}\n{} window{}\n\nDouble-click: open in terminal\nRight-click: more",
+                    p.path.display(),
+                    if s.attached { "Open in a terminal" } else { "No terminal open" },
+                    s.windows,
+                    if s.windows == 1 { "" } else { "s" },
+                ),
+                None => format!(
+                    "{}\nNot running\n\nDouble-click: start Claude Code here\nRight-click: more",
+                    p.path.display()
+                ),
+            };
+            let resp = ui
+                .with_layout(Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(is_sel, text)))
+                .inner
+                .on_hover_text(hover);
+            if resp.clicked() {
+                clicked = true;
+            }
+            if resp.double_clicked() {
+                double = true;
+            }
+            resp.context_menu(|ui| self.project_menu(ui, key));
+        });
+
+        if toggle {
+            if let Some(n) = session {
+                if open {
+                    self.collapsed.insert(n.to_string());
+                } else {
+                    self.collapsed.remove(n);
+                }
+            }
+        }
+        if clicked {
+            self.select_project(key.clone(), None);
+        }
+        if double {
+            match session {
+                Some(n) => self.open_terminal(n, None),
+                None => self.start_project(key),
+            }
+        }
+    }
+
     fn tree_session_row(&mut self, ui: &mut egui::Ui, s: &Session) {
-        let is_sel = self.selected.as_deref() == Some(&s.name) && self.selected_window.is_none();
+        let is_sel = self.selected_project.is_none() && self.selected.as_deref() == Some(&s.name) && self.selected_window.is_none();
         let open = !self.collapsed.contains(&s.name);
         let mut toggle = false;
         let mut clicked = false;
@@ -215,23 +483,14 @@ impl App {
             if ui.add(egui::Button::new(arrow).frame(false)).clicked() {
                 toggle = true;
             }
-            // Status dot: filled when a terminal is attached, hollow otherwise.
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 18.0), egui::Sense::hover());
-            let c = rect.center();
-            let color = ui.visuals().strong_text_color();
-            if s.attached {
-                ui.painter().circle_filled(c, 4.5, egui::Color32::from_rgb(90, 190, 110));
-            } else {
-                ui.painter().circle_stroke(c, 4.5, egui::Stroke::new(1.5, color));
-            }
+            Self::status_dot(ui, Some(s));
             let text = egui::RichText::new(&s.name).strong();
             let resp = ui
-                .with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_align(egui::Align::Min).with_main_justify(true), |ui| {
-                    ui.add(egui::SelectableLabel::new(is_sel, text))
-                })
+                .with_layout(Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(is_sel, text)))
                 .inner
                 .on_hover_text(format!(
-                    "{}\n{} window{}\nCreated {}\n\nDouble-click: open in terminal\nRight-click: more",
+                    "{}\n{}\n{} window{}\nCreated {}\n\nDouble-click: open in terminal\nRight-click: more",
+                    s.path,
                     if s.attached { "Open in a terminal" } else { "No terminal open" },
                     s.windows,
                     if s.windows == 1 { "" } else { "s" },
@@ -255,14 +514,14 @@ impl App {
             }
         }
         if clicked {
-            self.select(&s.name, None);
+            self.select_session(&s.name, None);
         }
         if double {
             self.open_terminal(&s.name, None);
         }
     }
 
-    fn tree_window_row(&mut self, ui: &mut egui::Ui, session: &str, w: &Window) {
+    fn tree_window_row(&mut self, ui: &mut egui::Ui, session: &str, w: &Window, project: Option<&PathBuf>) {
         let is_sel = self.selected.as_deref() == Some(session) && self.selected_window == Some(w.index);
         let mut clicked = false;
         let mut double = false;
@@ -274,9 +533,7 @@ impl App {
                 text = text.weak();
             }
             let resp = ui
-                .with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_align(egui::Align::Min).with_main_justify(true), |ui| {
-                    ui.add(egui::SelectableLabel::new(is_sel, text))
-                })
+                .with_layout(Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(is_sel, text)))
                 .inner
                 .on_hover_text(format!(
                     "Window {}: {}\nRunning: {}{}\n\nDouble-click: open in terminal here\nRight-click: more",
@@ -294,7 +551,10 @@ impl App {
             resp.context_menu(|ui| self.window_menu(ui, session, w));
         });
         if clicked {
-            self.select(session, Some(w.index));
+            match project {
+                Some(k) => self.select_project(k.clone(), Some(w.index)),
+                None => self.select_session(session, Some(w.index)),
+            }
         }
         if double {
             self.open_terminal(session, Some(w.index));
@@ -304,9 +564,35 @@ impl App {
     // ---------- right: detail ----------
 
     fn detail(&mut self, ui: &mut egui::Ui) {
-        let Some(name) = self.selected.clone() else {
+        let project = self.selected_project.clone().and_then(|k| self.project_at(&k).cloned().map(|p| (k, p)));
+        let name = self.selected.clone();
+
+        // A project with no running session
+        if let (Some((key, p)), None) = (&project, &name) {
+            ui.add_space(4.0);
+            ui.heading(&p.name);
+            ui.label(egui::RichText::new(p.path.display().to_string()).weak());
+            ui.label(egui::RichText::new("Not running").weak());
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(egui::RichText::new("▶  Start Claude Code").strong())).clicked() {
+                    self.start_project(key);
+                }
+                ui.menu_button("Actions ⏷", |ui| self.project_menu(ui, key));
+            });
+            ui.add_space(24.0);
+            ui.label(
+                egui::RichText::new(format!(
+                    "No tmux session is running in this folder. “Start Claude Code” opens a terminal there and runs “{START_COMMAND}”."
+                ))
+                .weak(),
+            );
+            return;
+        }
+
+        let Some(name) = name else {
             ui.centered_and_justified(|ui| {
-                ui.label(egui::RichText::new("Select a session on the left, or create one.").weak())
+                ui.label(egui::RichText::new("Add a project, or select one on the left.").weak())
             });
             return;
         };
@@ -314,31 +600,33 @@ impl App {
         let window = self
             .selected_window
             .and_then(|i| self.windows_of(&name).iter().find(|w| w.index == i).cloned());
+        let title = project.as_ref().map(|(_, p)| p.name.clone()).unwrap_or_else(|| name.clone());
 
-        // Header: title + subtitle
+        // Header
         ui.add_space(4.0);
         match &window {
             Some(w) => {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(&name).weak().size(18.0));
+                    ui.label(egui::RichText::new(&title).weak().size(18.0));
                     ui.label(egui::RichText::new("›").weak().size(18.0));
                     ui.heading(format!("{}: {}", w.index, w.name));
                 });
                 ui.label(
-                    egui::RichText::new(format!(
-                        "Running {}{}",
-                        w.command,
-                        if w.active { " · active window" } else { "" }
-                    ))
-                    .weak(),
+                    egui::RichText::new(format!("Running {}{}", w.command, if w.active { " · active window" } else { "" }))
+                        .weak(),
                 );
             }
             None => {
-                ui.heading(&name);
+                ui.heading(&title);
                 if let Some(s) = &session {
+                    let folder = project
+                        .as_ref()
+                        .map(|(_, p)| p.path.display().to_string())
+                        .unwrap_or_else(|| s.path.clone());
+                    ui.label(egui::RichText::new(folder).weak());
                     ui.label(
                         egui::RichText::new(format!(
-                            "{} · {} window{} · created {}",
+                            "{} · {} window{} · started {}",
                             if s.attached { "Open in a terminal" } else { "No terminal open" },
                             s.windows,
                             if s.windows == 1 { "" } else { "s" },
@@ -351,10 +639,9 @@ impl App {
         }
         ui.add_space(8.0);
 
-        // Toolbar: one primary action, the rest in a menu
+        // Toolbar
         ui.horizontal(|ui| {
-            let primary = egui::Button::new(egui::RichText::new("▶  Open in terminal").strong());
-            if ui.add(primary).clicked() {
+            if ui.add(egui::Button::new(egui::RichText::new("▶  Open in terminal").strong())).clicked() {
                 self.open_terminal(&name, window.as_ref().map(|w| w.index));
             }
             if let Some(w) = &window {
@@ -362,9 +649,10 @@ impl App {
                     self.make_active(&name, w.index);
                 }
             }
-            ui.menu_button("Actions ⏷", |ui| match &window {
-                Some(w) => self.window_menu(ui, &name, w),
-                None => self.session_menu(ui, &name),
+            ui.menu_button("Actions ⏷", |ui| match (&window, &project) {
+                (Some(w), _) => self.window_menu(ui, &name, w),
+                (None, Some((key, _))) => self.project_menu(ui, key),
+                (None, None) => self.session_menu(ui, &name),
             });
         });
         ui.add_space(8.0);
@@ -398,27 +686,21 @@ impl App {
                 }
             });
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::none())
-            .show_inside(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(if window.is_some() {
-                        "Live view of this window"
-                    } else {
-                        "Live view of the active window"
-                    })
+        egui::CentralPanel::default().frame(egui::Frame::none()).show_inside(ui, |ui| {
+            ui.label(
+                egui::RichText::new(if window.is_some() { "Live view of this window" } else { "Live view of the active window" })
                     .weak()
                     .small(),
-                );
-                egui::Frame::dark_canvas(ui.style()).show(ui, |ui| {
-                    egui::ScrollArea::both().auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(&self.preview).monospace().size(12.0))
-                                .wrap_mode(egui::TextWrapMode::Extend),
-                        );
-                    });
+            );
+            egui::Frame::dark_canvas(ui.style()).show(ui, |ui| {
+                egui::ScrollArea::both().auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(&self.preview).monospace().size(12.0))
+                            .wrap_mode(egui::TextWrapMode::Extend),
+                    );
                 });
             });
+        });
     }
 
     // ---------- dialogs ----------
@@ -429,9 +711,10 @@ impl App {
         let mut open = true;
 
         let title = match &dialog {
+            Dialog::RenameProject { .. } => "Rename project",
+            Dialog::RemoveProject { .. } => "Remove project from list?",
             Dialog::RenameSession { .. } => "Rename session",
             Dialog::RenameWindow { .. } => "Rename window",
-            Dialog::NewSession { .. } => "New session",
             Dialog::NewWindow { .. } => "New window",
             Dialog::KillSession(_) => "Kill session?",
             Dialog::KillWindow { .. } => "Kill window?",
@@ -448,8 +731,14 @@ impl App {
                 let mut confirm = false;
                 let mut cancel = esc;
 
+                let danger = |ui: &mut egui::Ui, label: &str| -> bool {
+                    let b = egui::Button::new(egui::RichText::new(label).color(egui::Color32::WHITE))
+                        .fill(egui::Color32::from_rgb(190, 50, 50));
+                    ui.add(b).clicked()
+                };
+
                 match &mut dialog {
-                    Dialog::RenameSession { text, .. } | Dialog::RenameWindow { text, .. } => {
+                    Dialog::RenameProject { text, .. } | Dialog::RenameSession { text, .. } | Dialog::RenameWindow { text, .. } => {
                         ui.horizontal(|ui| {
                             ui.label("New name");
                             ui.add(egui::TextEdit::singleline(text).desired_width(240.0)).request_focus();
@@ -464,21 +753,16 @@ impl App {
                             }
                         });
                     }
-                    Dialog::NewSession { name, dir } => {
-                        egui::Grid::new("new_session").num_columns(2).show(ui, |ui| {
-                            ui.label("Name");
-                            ui.add(egui::TextEdit::singleline(name).desired_width(240.0)).request_focus();
-                            ui.end_row();
-                            ui.label("Start in");
-                            ui.add(egui::TextEdit::singleline(dir).desired_width(240.0).hint_text("home folder"));
-                            ui.end_row();
-                        });
+                    Dialog::RemoveProject { path } => {
+                        let pname = self.project_at(path).map(|p| p.name.clone()).unwrap_or_default();
+                        ui.label(format!("Remove “{pname}” from the project list?"));
+                        ui.label(egui::RichText::new("The folder and any running tmux session are left as they are.").weak());
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             if ui.button("Cancel").clicked() {
                                 cancel = true;
                             }
-                            if ui.button("Create").clicked() || enter {
+                            if ui.button("Remove").clicked() || enter {
                                 confirm = true;
                             }
                         });
@@ -486,8 +770,7 @@ impl App {
                     Dialog::NewWindow { name, .. } => {
                         ui.horizontal(|ui| {
                             ui.label("Name");
-                            ui.add(egui::TextEdit::singleline(name).desired_width(240.0).hint_text("optional"))
-                                .request_focus();
+                            ui.add(egui::TextEdit::singleline(name).desired_width(240.0).hint_text("optional")).request_focus();
                         });
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
@@ -507,9 +790,7 @@ impl App {
                             if ui.button("Cancel").clicked() {
                                 cancel = true;
                             }
-                            let b = egui::Button::new(egui::RichText::new("Kill session").color(egui::Color32::WHITE))
-                                .fill(egui::Color32::from_rgb(190, 50, 50));
-                            if ui.add(b).clicked() {
+                            if danger(ui, "Kill session") {
                                 confirm = true;
                             }
                         });
@@ -528,9 +809,7 @@ impl App {
                             if ui.button("Cancel").clicked() {
                                 cancel = true;
                             }
-                            let b = egui::Button::new(egui::RichText::new("Kill window").color(egui::Color32::WHITE))
-                                .fill(egui::Color32::from_rgb(190, 50, 50));
-                            if ui.add(b).clicked() {
+                            if danger(ui, "Kill window") {
                                 confirm = true;
                             }
                         });
@@ -553,6 +832,38 @@ impl App {
 
     fn run_dialog(&mut self, d: &Dialog) {
         match d {
+            Dialog::RenameProject { path, text } => {
+                let new = text.trim();
+                if new.is_empty() {
+                    return;
+                }
+                let session = self.matched.get(path).cloned();
+                if let Some(p) = self.projects.iter_mut().find(|p| projects::normalize(&p.path) == *path) {
+                    p.name = new.to_string();
+                }
+                self.save_projects();
+                // Keep the running session's name in step with the project name.
+                let mut r = Ok(());
+                if let Some(old) = session {
+                    let wanted = self.project_at(path).map(|p| p.session_name()).unwrap_or_default();
+                    if old != wanted {
+                        r = tmux::rename_session(&old, &wanted);
+                        if r.is_ok() && self.collapsed.remove(&old) {
+                            self.collapsed.insert(wanted.clone());
+                        }
+                    }
+                }
+                self.apply(r, &format!("Renamed to “{new}”"));
+            }
+            Dialog::RemoveProject { path } => {
+                let name = self.project_at(path).map(|p| p.name.clone()).unwrap_or_default();
+                self.projects.retain(|p| projects::normalize(&p.path) != *path);
+                self.save_projects();
+                self.selected_project = None;
+                self.selected = None;
+                self.selected_window = None;
+                self.apply(Ok(()), &format!("Removed “{name}” from the list"));
+            }
             Dialog::RenameSession { old, text } => {
                 let new = text.trim();
                 if new.is_empty() || new == old {
@@ -575,21 +886,6 @@ impl App {
                 let r = tmux::rename_window(&format!("{session}:{index}"), new);
                 self.apply(r, &format!("Window renamed to “{new}”"));
             }
-            Dialog::NewSession { name, dir } => {
-                let name = name.trim();
-                if name.is_empty() {
-                    self.fail("A session name is required");
-                    return;
-                }
-                let dir = dir.trim();
-                let dir = if dir.is_empty() { None } else { Some(expand_home(dir)) };
-                let r = tmux::new_session(name, dir.as_deref());
-                if r.is_ok() {
-                    self.selected = Some(name.to_string());
-                    self.selected_window = None;
-                }
-                self.apply(r, &format!("Created “{name}”"));
-            }
             Dialog::NewWindow { session, name } => {
                 let n = name.trim();
                 let r = tmux::new_window(session, if n.is_empty() { None } else { Some(n) });
@@ -609,9 +905,7 @@ impl App {
             }
         }
     }
-
 }
-
 
 /// Add system fonts with wide Unicode coverage (box drawing, symbols, Japanese/Chinese/Korean)
 /// as fallbacks, so the preview can show whatever a terminal prints. Missing files are skipped.
@@ -640,7 +934,6 @@ fn install_fonts(ctx: &egui::Context) {
         return;
     }
 
-    // Monospace: DejaVu Sans Mono first (if present), then egui's own, then the symbol/CJK fallbacks.
     let mono = defs.families.entry(FontFamily::Monospace).or_default();
     if loaded.iter().any(|n| n == "dejavu_mono") {
         mono.insert(0, "dejavu_mono".to_string());
@@ -650,7 +943,6 @@ fn install_fonts(ctx: &egui::Context) {
             mono.push(n.clone());
         }
     }
-    // Proportional: keep egui's font first, add the fallbacks after it.
     let prop = defs.families.entry(FontFamily::Proportional).or_default();
     for n in &loaded {
         if n != "dejavu_mono" {
@@ -658,15 +950,6 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
     ctx.set_fonts(defs);
-}
-
-fn expand_home(p: &str) -> String {
-    if let Some(rest) = p.strip_prefix('~') {
-        if let Some(home) = std::env::var_os("HOME") {
-            return format!("{}{}", home.to_string_lossy(), rest);
-        }
-    }
-    p.to_string()
 }
 
 impl eframe::App for App {
@@ -678,23 +961,21 @@ impl eframe::App for App {
         ctx.request_repaint_after(REFRESH_EVERY);
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                match &self.status {
-                    Some((msg, true)) => {
-                        ui.colored_label(RED, format!("⚠ {msg}"));
-                    }
-                    Some((msg, false)) => {
-                        ui.label(msg);
-                    }
-                    None => {
-                        ui.label(egui::RichText::new("Ready").weak());
-                    }
+            ui.horizontal(|ui| match &self.status {
+                Some((msg, true)) => {
+                    ui.colored_label(RED, format!("⚠ {msg}"));
+                }
+                Some((msg, false)) => {
+                    ui.label(msg);
+                }
+                None => {
+                    ui.label(egui::RichText::new("Ready").weak());
                 }
             });
         });
 
         egui::SidePanel::left("tree")
-            .default_width(250.0)
+            .default_width(260.0)
             .min_width(180.0)
             .show(ctx, |ui| self.tree(ui));
 
@@ -707,8 +988,8 @@ impl eframe::App for App {
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("tmux sessions")
-            .with_inner_size([960.0, 600.0])
+            .with_title("Claude Code projects")
+            .with_inner_size([980.0, 620.0])
             .with_min_inner_size([640.0, 400.0]),
         ..Default::default()
     };
@@ -718,7 +999,7 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             install_fonts(&cc.egui_ctx);
             cc.egui_ctx.set_pixels_per_point(1.15);
-            Ok(Box::new(App::default()))
+            Ok(Box::new(App::new()))
         }),
     )
 }

@@ -8,6 +8,8 @@ pub struct Session {
     pub windows: u32,
     pub attached: bool,
     pub created: String,
+    /// The folder the session was started in.
+    pub path: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,7 +35,7 @@ fn run(args: &[&str]) -> Result<String, String> {
 }
 
 pub fn list_sessions() -> Result<Vec<Session>, String> {
-    let fmt = "#{session_name}\t#{session_windows}\t#{session_attached}\t#{t:session_created}";
+    let fmt = "#{session_name}\t#{session_windows}\t#{session_attached}\t#{t:session_created}\t#{session_path}";
     let text = match run(&["list-sessions", "-F", fmt]) {
         Ok(t) => t,
         // "no server running" is not an error for our purposes: there are simply no sessions.
@@ -49,6 +51,7 @@ pub fn list_sessions() -> Result<Vec<Session>, String> {
                 windows: f.next()?.parse().ok()?,
                 attached: f.next()?.parse::<u32>().ok()? > 0,
                 created: f.next().unwrap_or("").to_string(),
+                path: f.next().unwrap_or("").to_string(),
             })
         })
         .collect())

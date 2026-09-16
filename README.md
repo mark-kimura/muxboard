@@ -1,18 +1,22 @@
-# tmux-gui
+# tmux-gui — Claude Code projects
 
-A small desktop window for the everyday tmux operations, so you never have to remember the prefix-key shortcuts.
+A desktop window that lists your projects and starts or manages a Claude Code session in each one, using tmux underneath. No tmux keyboard shortcuts needed.
 
 ## Layout
-- **Left**: a tree of sessions with their windows nested underneath. A green filled dot means the session is open in a terminal window; a small triangle marks each session's active window.
-- **Right**: the selected session or window, one primary button ("Open in terminal"), an "Actions" menu with everything else, a live view of the terminal text refreshed every second, and a command box underneath.
+- **Left**: your registered projects. A project is a folder. If a tmux session was started in that folder, the project shows it: a green filled dot means a terminal window is open on it, a hollow dot means it runs with no terminal open, and a dimmed name means nothing is running. Windows of a running session are nested under the project. tmux sessions that belong to no project are listed under "Other tmux sessions".
+- **Right**: the selected project, one primary button, an "Actions" menu, a live view of the terminal text refreshed every second, and a command box underneath.
 
 ## How to do things
-- Click a session or window to select it. Double-click to open it in a terminal.
+- "+ Add project" opens a folder picker. The project name defaults to the folder name.
+- Double-click a project that is not running: a tmux session is created in its folder, `claude --continue` is typed into it, and a terminal opens on it.
+- Double-click a running project (or window): a terminal opens on it.
 - Right-click any row for its actions. The same actions are in the "Actions" menu on the right.
-- Session actions: open in terminal, new window, rename, close terminals (keep running), kill.
+- Project actions: start Claude Code (or, when running: open in terminal, new window, close terminals, kill session), rename project, change folder, remove from list. Renaming a project also renames its running session.
 - Window actions: open in terminal here, make active, rename, kill.
-- "+ New session" is above the tree. Killing anything asks for confirmation first.
-- Command box: type a command line and press Enter. It is typed into the selected window followed by Enter, and the result shows in the live view. For anything interactive, open the terminal.
+- Command box: type a command line and press Enter. It is typed into the selected window followed by Enter. For anything interactive, open the terminal.
+- Killing anything asks for confirmation first. Removing a project only edits the list; the folder and any session are untouched.
+
+The project list is stored in `~/.config/tmux-gui/projects.json`.
 
 "Open in terminal" uses `$TERMINAL` if set, otherwise gnome-terminal, kitty, alacritty, wezterm, konsole, xfce4-terminal, tilix, foot, xterm, in that order.
 
@@ -21,4 +25,4 @@ A small desktop window for the everyday tmux operations, so you never have to re
 cargo build --release
 ./target/release/tmux-gui
 ```
-Requires `tmux` on the PATH.
+Requires `tmux` and `claude` on the PATH.

@@ -417,7 +417,8 @@ impl App {
                     toggle = true;
                 }
             } else {
-                ui.add_space(20.0);
+                // Reserve exactly the arrow's width so rows line up whether or not they expand.
+                ui.add_visible(false, egui::Button::new("⏷").frame(false));
             }
             Self::status_dot(ui, sess.as_ref());
             let mut text = egui::RichText::new(&p.name).strong();

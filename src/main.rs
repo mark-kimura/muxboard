@@ -421,9 +421,15 @@ impl App {
                 ui.add_visible(false, egui::Button::new("⏷").frame(false));
             }
             Self::status_dot(ui, sess.as_ref());
-            let mut text = egui::RichText::new(&p.name).strong();
+            // Name always at full strength; a not-running project gets a small grey note after it,
+            // so it never looks like one of the dimmed window rows above it.
+            let mut text = egui::text::LayoutJob::default();
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let strong = ui.visuals().strong_text_color();
+            text.append(&p.name, 0.0, egui::TextFormat { font_id: font.clone(), color: strong, ..Default::default() });
             if session.is_none() {
-                text = text.weak();
+                let small = egui::TextStyle::Small.resolve(ui.style());
+                text.append("not running", 8.0, egui::TextFormat { font_id: small, color: ui.visuals().weak_text_color(), ..Default::default() });
             }
             let hover = match &sess {
                 Some(s) => format!(

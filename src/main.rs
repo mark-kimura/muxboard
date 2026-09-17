@@ -16,9 +16,10 @@ const GREEN: egui::Color32 = egui::Color32::from_rgb(90, 190, 110);
 const YELLOW: egui::Color32 = egui::Color32::from_rgb(230, 190, 60);
 const START_COMMAND: &str = "claude --continue";
 /// Window width when only the project list is shown, and the full size when the detail panel is open.
-const LIST_WIDTH: f32 = 300.0;
+const DEFAULT_LIST_WIDTH: f32 = 300.0;
+const MIN_LIST_WIDTH: f32 = 180.0;
 const TAB_WIDTH: f32 = 22.0;
-const COLLAPSED_WIDTH: f32 = LIST_WIDTH + TAB_WIDTH;
+const MIN_DETAIL_WIDTH: f32 = 420.0;
 const EXPANDED_SIZE: egui::Vec2 = egui::vec2(1000.0, 640.0);
 
 /// The one modal dialog that can be open at a time.
@@ -55,11 +56,13 @@ struct App {
     detail_open: bool,
     /// Window size to restore when the detail panel is shown again.
     expanded_size: egui::Vec2,
+    /// Width of the project list. Changed by dragging the divider (expanded) or resizing the window (collapsed).
+    list_width: f32,
 }
 
 impl App {
     fn new() -> Self {
-        App { projects: projects::load(), expanded_size: EXPANDED_SIZE, ..Default::default() }
+        App { projects: projects::load(), expanded_size: EXPANDED_SIZE, list_width: DEFAULT_LIST_WIDTH, ..Default::default() }
     }
 
     // ---------- data ----------
@@ -267,10 +270,12 @@ impl App {
             }
             self.detail_open = false;
             let h = current.map(|s| s.y).unwrap_or(EXPANDED_SIZE.y);
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(COLLAPSED_WIDTH, h)));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(self.list_width + TAB_WIDTH, h)));
         } else {
             self.detail_open = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(self.expanded_size));
+            let mut size = self.expanded_size;
+            size.x = size.x.max(self.list_width + TAB_WIDTH + MIN_DETAIL_WIDTH);
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         }
     }
 
@@ -1019,12 +1024,22 @@ impl eframe::App for App {
             self.toggle_detail(ctx);
         }
 
-        // The list is always the same fixed-width side panel, so nothing in it moves
-        // when the detail panel is shown or hidden.
-        egui::SidePanel::left("tree")
-            .exact_width(LIST_WIDTH)
-            .resizable(false)
-            .show(ctx, |ui| self.tree(ui));
+        // The list is always a side panel, so its header stays put when the detail panel toggles.
+        // Expanded: the divider is draggable. Collapsed: the list fills the window, so resizing
+        // the window sets its width. Either way the width is remembered in `list_width`.
+        let panel = if self.detail_open {
+            egui::SidePanel::left("tree")
+                .resizable(true)
+                .default_width(self.list_width)
+                .min_width(MIN_LIST_WIDTH)
+                .max_width(ctx.screen_rect().width() - TAB_WIDTH - MIN_DETAIL_WIDTH)
+        } else {
+            egui::SidePanel::left("tree")
+                .resizable(false)
+                .exact_width((ctx.screen_rect().width() - TAB_WIDTH).max(MIN_LIST_WIDTH))
+        };
+        let resp = panel.show(ctx, |ui| self.tree(ui));
+        self.list_width = resp.response.rect.width();
         if self.detail_open {
             egui::CentralPanel::default().show(ctx, |ui| self.detail(ui));
         }
@@ -1037,8 +1052,8 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Claude Code projects")
-            .with_inner_size([COLLAPSED_WIDTH, EXPANDED_SIZE.y])
-            .with_min_inner_size([260.0, 300.0]),
+            .with_inner_size([DEFAULT_LIST_WIDTH + TAB_WIDTH, EXPANDED_SIZE.y])
+            .with_min_inner_size([MIN_LIST_WIDTH + TAB_WIDTH, 300.0]),
         ..Default::default()
     };
     eframe::run_native(

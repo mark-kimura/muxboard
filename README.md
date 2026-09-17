@@ -3,6 +3,8 @@
 A desktop window that lists your projects and starts or manages a Claude Code session in each one, using tmux underneath. No tmux keyboard shortcuts needed.
 
 ## Layout
+By default the window is a narrow project list. A tab on its right edge opens the preview panel and widens the window; clicking the tab again hides the panel and shrinks the window back.
+
 - **Left**: your registered projects. A project is a folder. If a tmux session was started in that folder, the project shows it: a green filled dot means a terminal window is open on it, a hollow dot means it runs with no terminal open, and a dimmed name means nothing is running. Windows of a running session are nested under the project. tmux sessions that belong to no project are listed under "Other tmux sessions".
 - **Right**: the selected project, one primary button, an "Actions" menu, a live view of the terminal text refreshed every second, and a command box underneath.
 

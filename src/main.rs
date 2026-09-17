@@ -14,6 +14,10 @@ const REFRESH_EVERY: Duration = Duration::from_millis(1000);
 const RED: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 const GREEN: egui::Color32 = egui::Color32::from_rgb(90, 190, 110);
 const START_COMMAND: &str = "claude --continue";
+/// Window width when only the project list is shown, and the full size when the detail panel is open.
+const COLLAPSED_WIDTH: f32 = 320.0;
+const EXPANDED_SIZE: egui::Vec2 = egui::vec2(1000.0, 640.0);
+const TAB_WIDTH: f32 = 22.0;
 
 /// The one modal dialog that can be open at a time.
 enum Dialog {
@@ -44,11 +48,16 @@ struct App {
     last_refresh: Option<Instant>,
     dialog: Option<Dialog>,
     status: Option<(String, bool)>,
+
+    /// Whether the right-hand detail panel is shown. Off by default: the window is just the project list.
+    detail_open: bool,
+    /// Window size to restore when the detail panel is shown again.
+    expanded_size: egui::Vec2,
 }
 
 impl App {
     fn new() -> Self {
-        App { projects: projects::load(), ..Default::default() }
+        App { projects: projects::load(), expanded_size: EXPANDED_SIZE, ..Default::default() }
     }
 
     // ---------- data ----------
@@ -246,6 +255,21 @@ impl App {
         self.save_projects();
         self.selected_project = Some(new_key);
         self.apply(Ok(()), "Folder changed");
+    }
+
+    fn toggle_detail(&mut self, ctx: &egui::Context) {
+        let current = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+        if self.detail_open {
+            if let Some(sz) = current {
+                self.expanded_size = sz;
+            }
+            self.detail_open = false;
+            let h = current.map(|s| s.y).unwrap_or(EXPANDED_SIZE.y);
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(COLLAPSED_WIDTH, h)));
+        } else {
+            self.detail_open = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(self.expanded_size));
+        }
     }
 
     // ---------- menus ----------
@@ -981,12 +1005,32 @@ impl eframe::App for App {
             });
         });
 
-        egui::SidePanel::left("tree")
-            .default_width(260.0)
-            .min_width(180.0)
-            .show(ctx, |ui| self.tree(ui));
+        // Narrow tab on the right edge that shows or hides the detail panel.
+        let mut toggle = false;
+        egui::SidePanel::right("detail_tab")
+            .exact_width(TAB_WIDTH)
+            .resizable(false)
+            .frame(egui::Frame::none().fill(ctx.style().visuals.faint_bg_color))
+            .show(ctx, |ui| {
+                let (label, hint) = if self.detail_open { ("⏵", "Hide the preview panel") } else { ("⏴", "Show the preview panel") };
+                let size = egui::vec2(TAB_WIDTH, ui.available_height());
+                if ui.add_sized(size, egui::Button::new(label).frame(false)).on_hover_text(hint).clicked() {
+                    toggle = true;
+                }
+            });
+        if toggle {
+            self.toggle_detail(ctx);
+        }
 
-        egui::CentralPanel::default().show(ctx, |ui| self.detail(ui));
+        if self.detail_open {
+            egui::SidePanel::left("tree")
+                .default_width(280.0)
+                .min_width(180.0)
+                .show(ctx, |ui| self.tree(ui));
+            egui::CentralPanel::default().show(ctx, |ui| self.detail(ui));
+        } else {
+            egui::CentralPanel::default().show(ctx, |ui| self.tree(ui));
+        }
 
         self.dialogs(ctx);
     }
@@ -996,8 +1040,8 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Claude Code projects")
-            .with_inner_size([980.0, 620.0])
-            .with_min_inner_size([640.0, 400.0]),
+            .with_inner_size([COLLAPSED_WIDTH, EXPANDED_SIZE.y])
+            .with_min_inner_size([260.0, 300.0]),
         ..Default::default()
     };
     eframe::run_native(

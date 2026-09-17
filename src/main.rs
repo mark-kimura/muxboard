@@ -58,6 +58,9 @@ struct App {
     expanded_size: egui::Vec2,
     /// Width of the project list. Changed by dragging the divider (expanded) or resizing the window (collapsed).
     list_width: f32,
+    /// Window width requested by the last toggle, until the window actually reaches it.
+    /// While pending, the list is drawn at its remembered width and that width is not updated.
+    pending_width: Option<(f32, u32)>,
 }
 
 impl App {
@@ -270,11 +273,14 @@ impl App {
             }
             self.detail_open = false;
             let h = current.map(|s| s.y).unwrap_or(EXPANDED_SIZE.y);
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(self.list_width + TAB_WIDTH, h)));
+            let w = self.list_width + TAB_WIDTH;
+            self.pending_width = Some((w, 0));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
         } else {
             self.detail_open = true;
             let mut size = self.expanded_size;
             size.x = size.x.max(self.list_width + TAB_WIDTH + MIN_DETAIL_WIDTH);
+            self.pending_width = Some((size.x, 0));
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         }
     }
@@ -1027,19 +1033,37 @@ impl eframe::App for App {
         // The list is always a side panel, so its header stays put when the detail panel toggles.
         // Expanded: the divider is draggable. Collapsed: the list fills the window, so resizing
         // the window sets its width. Either way the width is remembered in `list_width`.
-        let panel = if self.detail_open {
+        let screen_w = ctx.screen_rect().width();
+        // Has the window reached the size we asked for? Give up waiting after a while
+        // in case the window manager refused the request.
+        let settling = match self.pending_width {
+            Some((w, frames)) if (screen_w - w).abs() > 2.0 && frames < 60 => {
+                self.pending_width = Some((w, frames + 1));
+                ctx.request_repaint();
+                true
+            }
+            _ => {
+                self.pending_width = None;
+                false
+            }
+        };
+        let panel = if settling {
+            egui::SidePanel::left("tree").resizable(false).exact_width(self.list_width)
+        } else if self.detail_open {
             egui::SidePanel::left("tree")
                 .resizable(true)
                 .default_width(self.list_width)
                 .min_width(MIN_LIST_WIDTH)
-                .max_width(ctx.screen_rect().width() - TAB_WIDTH - MIN_DETAIL_WIDTH)
+                .max_width((screen_w - TAB_WIDTH - MIN_DETAIL_WIDTH).max(MIN_LIST_WIDTH))
         } else {
             egui::SidePanel::left("tree")
                 .resizable(false)
-                .exact_width((ctx.screen_rect().width() - TAB_WIDTH).max(MIN_LIST_WIDTH))
+                .exact_width((screen_w - TAB_WIDTH).max(MIN_LIST_WIDTH))
         };
         let resp = panel.show(ctx, |ui| self.tree(ui));
-        self.list_width = resp.response.rect.width();
+        if !settling {
+            self.list_width = resp.response.rect.width();
+        }
         if self.detail_open {
             egui::CentralPanel::default().show(ctx, |ui| self.detail(ui));
         }

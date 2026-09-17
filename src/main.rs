@@ -13,6 +13,7 @@ use tmux::{Session, Window};
 const REFRESH_EVERY: Duration = Duration::from_millis(1000);
 const RED: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 const GREEN: egui::Color32 = egui::Color32::from_rgb(90, 190, 110);
+const YELLOW: egui::Color32 = egui::Color32::from_rgb(230, 190, 60);
 const START_COMMAND: &str = "claude --continue";
 /// Window width when only the project list is shown, and the full size when the detail panel is open.
 const COLLAPSED_WIDTH: f32 = 320.0;
@@ -413,7 +414,7 @@ impl App {
                 ui.painter().circle_filled(c, 4.5, GREEN);
             }
             Some(_) => {
-                ui.painter().circle_stroke(c, 4.5, egui::Stroke::new(1.5, ui.visuals().strong_text_color()));
+                ui.painter().circle_filled(c, 4.5, YELLOW);
             }
             None => {
                 ui.painter().circle_stroke(c, 4.5, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
@@ -445,15 +446,10 @@ impl App {
                 ui.add_visible(false, egui::Button::new("⏷").frame(false));
             }
             Self::status_dot(ui, sess.as_ref());
-            // Name always at full strength; a not-running project gets a small grey note after it,
-            // so it never looks like one of the dimmed window rows above it.
-            let mut text = egui::text::LayoutJob::default();
-            let font = egui::TextStyle::Body.resolve(ui.style());
-            let strong = ui.visuals().strong_text_color();
-            text.append(&p.name, 0.0, egui::TextFormat { font_id: font.clone(), color: strong, ..Default::default() });
+            // Running projects in full strength; not-running ones dimmed.
+            let mut text = egui::RichText::new(&p.name).strong();
             if session.is_none() {
-                let small = egui::TextStyle::Small.resolve(ui.style());
-                text.append("not running", 8.0, egui::TextFormat { font_id: small, color: ui.visuals().weak_text_color(), ..Default::default() });
+                text = egui::RichText::new(&p.name).weak();
             }
             let hover = match &sess {
                 Some(s) => format!(

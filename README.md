@@ -10,17 +10,17 @@ By default the window is a narrow project list. A tab on its right edge opens th
 
 ## How to do things
 - "+ Add project" opens a folder picker. The project name defaults to the folder name.
-- Double-click a project that is not running: a tmux session is created in its folder, `claude --continue` is typed into it, and a terminal opens on it.
+- Double-click a project that is not running: a tmux session is created in its folder, the start command is typed into it, and a terminal opens on it. The default start command is `claude --continue`; change it with the gear button (Settings), or per project in "Edit project". A blank command gives a plain shell, so the app works for any terminal program (vim, htop, ...).
 - Double-click a running project (or window): a terminal opens on it.
 - Right-click any row for its actions. The same actions are in the "Actions" menu on the right.
-- Project actions: start Claude Code (or, when running: open in terminal, new window, close terminals, kill session), open folder in the file manager, rename project, change folder, remove from list. Renaming a project also renames its running session.
+- Project actions: start session (or, when running: open in terminal, new window, close terminals, kill session), open folder in the file manager, edit project (name, folder, start command), remove from list. Renaming a project also renames its running session.
 - Window actions: open in terminal here, make active, rename, kill.
 - Command box: type a command line and press Enter. It is typed into the selected window followed by Enter. For anything interactive, open the terminal.
 - Killing anything asks for confirmation first. Removing a project only edits the list; the folder and any session are untouched.
 
-The project list is stored in `~/.config/tmux-gui/projects.json`.
+The project list is stored in `~/.config/tmux-gui/projects.json` and the settings in `~/.config/tmux-gui/settings.json`.
 
-"Open in terminal" uses `$TERMINAL` if set, otherwise gnome-terminal, kitty, alacritty, wezterm, konsole, xfce4-terminal, tilix, foot, xterm, in that order.
+"Open in terminal" uses the terminal program from Settings if set, else `$TERMINAL` if set, otherwise gnome-terminal, kitty, alacritty, wezterm, konsole, xfce4-terminal, tilix, foot, xterm, in that order.
 
 ## Build and run
 ```

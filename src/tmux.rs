@@ -107,12 +107,13 @@ fn find_in_path(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Open a new terminal window attached to the session. Honours `$TERMINAL` if set.
-pub fn attach_in_terminal(name: &str) -> Result<(), String> {
+/// Open a new terminal window attached to the session. Uses `preferred` if given, else `$TERMINAL`, else the first terminal found.
+pub fn attach_in_terminal(name: &str, preferred: Option<&str>) -> Result<(), String> {
     let tmux_cmd = ["tmux", "attach-session", "-t", name];
 
     let mut candidates: Vec<(String, Vec<&str>)> = Vec::new();
-    if let Ok(t) = std::env::var("TERMINAL") {
+    let preferred = preferred.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    if let Some(t) = preferred.or_else(|| std::env::var("TERMINAL").ok()) {
         if !t.trim().is_empty() {
             let base = std::path::Path::new(&t)
                 .file_name()

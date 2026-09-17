@@ -4,7 +4,7 @@ mod projects;
 mod tmux;
 
 use eframe::egui;
-use projects::Project;
+use projects::{Project, Settings};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -14,7 +14,6 @@ const REFRESH_EVERY: Duration = Duration::from_millis(1000);
 const RED: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 const GREEN: egui::Color32 = egui::Color32::from_rgb(90, 190, 110);
 const YELLOW: egui::Color32 = egui::Color32::from_rgb(230, 190, 60);
-const START_COMMAND: &str = "claude --continue";
 /// Window width when only the project list is shown, and the full size when the detail panel is open.
 const DEFAULT_LIST_WIDTH: f32 = 300.0;
 const MIN_LIST_WIDTH: f32 = 180.0;
@@ -24,7 +23,8 @@ const EXPANDED_SIZE: egui::Vec2 = egui::vec2(1000.0, 640.0);
 
 /// The one modal dialog that can be open at a time.
 enum Dialog {
-    RenameProject { path: PathBuf, text: String },
+    EditProject { path: PathBuf, name: String, folder: String, command: String },
+    Settings(Settings),
     RemoveProject { path: PathBuf },
     RenameSession { old: String, text: String },
     RenameWindow { session: String, index: u32, text: String },
@@ -36,6 +36,7 @@ enum Dialog {
 #[derive(Default)]
 struct App {
     projects: Vec<Project>,
+    settings: Settings,
     sessions: Vec<Session>,
     windows: HashMap<String, Vec<Window>>,
     /// project root (normalized) -> session name, for projects that have a running session
@@ -67,7 +68,7 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        App { projects: projects::load(), expanded_size: EXPANDED_SIZE, list_width: DEFAULT_LIST_WIDTH, ..Default::default() }
+        App { projects: projects::load(), settings: projects::load_settings(), expanded_size: EXPANDED_SIZE, list_width: DEFAULT_LIST_WIDTH, ..Default::default() }
     }
 
     // ---------- data ----------
@@ -173,6 +174,12 @@ impl App {
         self.projects.iter().find(|p| projects::normalize(&p.path) == *key)
     }
 
+    /// The command to type into a new session for this project.
+    fn command_for(&self, p: &Project) -> String {
+        let c = p.command.trim();
+        if c.is_empty() { self.settings.start_command.trim().to_string() } else { c.to_string() }
+    }
+
     fn other_sessions(&self) -> Vec<Session> {
         let taken: HashSet<&String> = self.matched.values().collect();
         self.sessions.iter().filter(|s| !taken.contains(&s.name)).cloned().collect()
@@ -205,7 +212,7 @@ impl App {
         if let Some(w) = window {
             let _ = tmux::select_window(&format!("{session}:{w}"));
         }
-        let r = tmux::attach_in_terminal(session);
+        let r = tmux::attach_in_terminal(session, Some(&self.settings.terminal));
         self.apply(r, "Opened a terminal");
     }
 
@@ -224,15 +231,17 @@ impl App {
             n += 1;
         }
         let path = p.path.to_string_lossy().into_owned();
+        let command = self.command_for(&p);
+        let terminal = self.settings.terminal.clone();
         let r = tmux::new_session(&name, Some(&path))
-            .and_then(|_| tmux::send_line(&name, START_COMMAND))
-            .and_then(|_| tmux::attach_in_terminal(&name));
+            .and_then(|_| if command.is_empty() { Ok(()) } else { tmux::send_line(&name, &command) })
+            .and_then(|_| tmux::attach_in_terminal(&name, Some(&terminal)));
         if r.is_ok() {
             self.selected_project = Some(key.clone());
             self.selected = Some(name.clone());
             self.selected_window = None;
         }
-        self.apply(r, &format!("Started Claude Code in “{}”", p.name));
+        self.apply(r, &format!("Started “{}”", p.name));
     }
 
     fn add_project_dialog(&mut self) {
@@ -252,19 +261,6 @@ impl App {
         self.selected = None;
         self.selected_window = None;
         self.apply(Ok(()), &format!("Added project “{name}”"));
-    }
-
-    fn change_folder(&mut self, key: &PathBuf) {
-        let Some(folder) = rfd::FileDialog::new().set_title("Choose the project folder").pick_folder() else {
-            return;
-        };
-        let new_key = projects::normalize(&folder);
-        if let Some(p) = self.projects.iter_mut().find(|p| projects::normalize(&p.path) == *key) {
-            p.path = folder;
-        }
-        self.save_projects();
-        self.selected_project = Some(new_key);
-        self.apply(Ok(()), "Folder changed");
     }
 
     fn toggle_detail(&mut self, ctx: &egui::Context) {
@@ -312,7 +308,7 @@ impl App {
                 self.session_menu(ui, name, false);
             }
             None => {
-                if ui.button("▶  Start Claude Code").clicked() {
+                if ui.button("▶  Start session").clicked() {
                     self.start_project(key);
                     ui.close_menu();
                 }
@@ -325,13 +321,15 @@ impl App {
             ui.close_menu();
         }
         ui.separator();
-        if ui.button("✏  Rename project…").clicked() {
-            let text = self.project_at(key).map(|p| p.name.clone()).unwrap_or_default();
-            self.dialog = Some(Dialog::RenameProject { path: key.clone(), text });
-            ui.close_menu();
-        }
-        if ui.button("✎  Change folder…").clicked() {
-            self.change_folder(key);
+        if ui.button("✏  Edit project…").clicked() {
+            if let Some(p) = self.project_at(key).cloned() {
+                self.dialog = Some(Dialog::EditProject {
+                    path: key.clone(),
+                    name: p.name,
+                    folder: p.path.display().to_string(),
+                    command: p.command,
+                });
+            }
             ui.close_menu();
         }
         if ui.button("－  Remove from list…").clicked() {
@@ -400,6 +398,9 @@ impl App {
         ui.horizontal(|ui| {
             ui.heading("Projects");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("⚙").on_hover_text("Settings").clicked() {
+                    self.dialog = Some(Dialog::Settings(self.settings.clone()));
+                }
                 if ui.button("+ Add project").clicked() {
                     self.add_project_dialog();
                 }
@@ -503,7 +504,7 @@ impl App {
                     if s.windows == 1 { "" } else { "s" },
                 ),
                 None => format!(
-                    "{}\nNot running\n\nDouble-click: start Claude Code here\nRight-click: more",
+                    "{}\nNot running\n\nDouble-click: start a session here\nRight-click: more",
                     p.path.display()
                 ),
             };
@@ -644,17 +645,20 @@ impl App {
             ui.label(egui::RichText::new(p.path.display().to_string()).weak());
             ui.label(egui::RichText::new("Not running").weak());
             ui.add_space(8.0);
+            let command = self.command_for(p);
             ui.horizontal(|ui| {
-                if ui.add(egui::Button::new(egui::RichText::new("▶  Start Claude Code").strong())).clicked() {
+                if ui.add(egui::Button::new(egui::RichText::new("▶  Start session").strong())).clicked() {
                     self.start_project(key);
                 }
                 ui.menu_button("Actions ⏷", |ui| self.project_menu(ui, key));
             });
             ui.add_space(24.0);
             ui.label(
-                egui::RichText::new(format!(
-                    "No tmux session is running in this folder. “Start Claude Code” opens a terminal there and runs “{START_COMMAND}”."
-                ))
+                egui::RichText::new(if command.is_empty() {
+                    "No tmux session is running in this folder. “Start session” opens a terminal there with a shell.".to_string()
+                } else {
+                    format!("No tmux session is running in this folder. “Start session” opens a terminal there and runs “{command}”.")
+                })
                 .weak(),
             );
             return;
@@ -781,7 +785,8 @@ impl App {
         let mut open = true;
 
         let title = match &dialog {
-            Dialog::RenameProject { .. } => "Rename project",
+            Dialog::EditProject { .. } => "Edit project",
+            Dialog::Settings(_) => "Settings",
             Dialog::RemoveProject { .. } => "Remove project from list?",
             Dialog::RenameSession { .. } => "Rename session",
             Dialog::RenameWindow { .. } => "Rename window",
@@ -808,7 +813,7 @@ impl App {
                 };
 
                 match &mut dialog {
-                    Dialog::RenameProject { text, .. } | Dialog::RenameSession { text, .. } | Dialog::RenameWindow { text, .. } => {
+                    Dialog::RenameSession { text, .. } | Dialog::RenameWindow { text, .. } => {
                         ui.horizontal(|ui| {
                             ui.label("New name");
                             ui.add(egui::TextEdit::singleline(text).desired_width(240.0)).request_focus();
@@ -819,6 +824,72 @@ impl App {
                                 cancel = true;
                             }
                             if ui.button("Rename").clicked() || enter {
+                                confirm = true;
+                            }
+                        });
+                    }
+                    Dialog::EditProject { name, folder, command, .. } => {
+                        egui::Grid::new("edit_project").num_columns(2).spacing([8.0, 8.0]).show(ui, |ui| {
+                            ui.label("Name");
+                            ui.add(egui::TextEdit::singleline(name).desired_width(320.0));
+                            ui.end_row();
+                            ui.label("Folder");
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(folder).desired_width(250.0));
+                                if ui.button("Browse…").clicked() {
+                                    if let Some(f) = rfd::FileDialog::new().set_title("Choose the project folder").pick_folder() {
+                                        *folder = f.display().to_string();
+                                    }
+                                }
+                            });
+                            ui.end_row();
+                            ui.label("Start command");
+                            ui.add(
+                                egui::TextEdit::singleline(command)
+                                    .desired_width(320.0)
+                                    .font(egui::TextStyle::Monospace)
+                                    .hint_text(format!("default: {}", self.settings.start_command)),
+                            );
+                            ui.end_row();
+                        });
+                        ui.label(egui::RichText::new("The start command is typed into the new tmux session when the project is started. Leave it blank to use the default from Settings.").weak().small());
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Cancel").clicked() {
+                                cancel = true;
+                            }
+                            if ui.button("Save").clicked() || enter {
+                                confirm = true;
+                            }
+                        });
+                    }
+                    Dialog::Settings(st) => {
+                        egui::Grid::new("settings").num_columns(2).spacing([8.0, 8.0]).show(ui, |ui| {
+                            ui.label("Default start command");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut st.start_command)
+                                    .desired_width(320.0)
+                                    .font(egui::TextStyle::Monospace)
+                                    .hint_text("blank: just a shell"),
+                            );
+                            ui.end_row();
+                            ui.label("Terminal program");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut st.terminal)
+                                    .desired_width(320.0)
+                                    .font(egui::TextStyle::Monospace)
+                                    .hint_text("blank: $TERMINAL or the first one found"),
+                            );
+                            ui.end_row();
+                        });
+                        ui.label(egui::RichText::new("The start command is typed into a new tmux session when a project is started, e.g. “claude --continue”, “vim”, or “htop”. Each project can override it in Edit project.").weak().small());
+                        ui.label(egui::RichText::new("Terminal program: gnome-terminal, kitty, alacritty, wezterm, konsole, xfce4-terminal, tilix, foot, or xterm.").weak().small());
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Cancel").clicked() {
+                                cancel = true;
+                            }
+                            if ui.button("Save").clicked() || enter {
                                 confirm = true;
                             }
                         });
@@ -902,20 +973,30 @@ impl App {
 
     fn run_dialog(&mut self, d: &Dialog) {
         match d {
-            Dialog::RenameProject { path, text } => {
-                let new = text.trim();
-                if new.is_empty() {
+            Dialog::EditProject { path, name, folder, command } => {
+                let new_name = name.trim();
+                let new_folder = folder.trim();
+                if new_name.is_empty() || new_folder.is_empty() {
+                    self.fail("Name and folder are required");
                     return;
                 }
                 let session = self.matched.get(path).cloned();
+                let new_key = projects::normalize(std::path::Path::new(new_folder));
+                if new_key != *path && self.projects.iter().any(|p| projects::normalize(&p.path) == new_key) {
+                    self.fail("Another project already uses that folder");
+                    return;
+                }
                 if let Some(p) = self.projects.iter_mut().find(|p| projects::normalize(&p.path) == *path) {
-                    p.name = new.to_string();
+                    p.name = new_name.to_string();
+                    p.path = PathBuf::from(new_folder);
+                    p.command = command.trim().to_string();
                 }
                 self.save_projects();
+                self.selected_project = Some(new_key.clone());
                 // Keep the running session's name in step with the project name.
                 let mut r = Ok(());
-                if let Some(old) = session {
-                    let wanted = self.project_at(path).map(|p| p.session_name()).unwrap_or_default();
+                if let (Some(old), true) = (session, new_key == *path) {
+                    let wanted = self.project_at(&new_key).map(|p| p.session_name()).unwrap_or_default();
                     if old != wanted {
                         r = tmux::rename_session(&old, &wanted);
                         if r.is_ok() && self.collapsed.remove(&old) {
@@ -923,7 +1004,12 @@ impl App {
                         }
                     }
                 }
-                self.apply(r, &format!("Renamed to “{new}”"));
+                self.apply(r, "Project saved");
+            }
+            Dialog::Settings(st) => {
+                self.settings = st.clone();
+                let r = projects::save_settings(&self.settings);
+                self.apply(r, "Settings saved");
             }
             Dialog::RemoveProject { path } => {
                 let name = self.project_at(path).map(|p| p.name.clone()).unwrap_or_default();

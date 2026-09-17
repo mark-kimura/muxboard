@@ -718,7 +718,7 @@ impl App {
             } else {
                 ui.painter().rect_stroke(sq, 1.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
             }
-            let mut text = egui::RichText::new(format!("{}  {}", w.index, w.name));
+            let mut text = egui::RichText::new(&w.name);
             if !w.active {
                 text = text.weak();
             }

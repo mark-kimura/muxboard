@@ -1008,7 +1008,7 @@ impl eframe::App for App {
             .resizable(false)
             .frame(egui::Frame::none().fill(ctx.style().visuals.faint_bg_color))
             .show(ctx, |ui| {
-                let (label, hint) = if self.detail_open { ("⏵", "Hide the preview panel") } else { ("⏴", "Show the preview panel") };
+                let (label, hint) = if self.detail_open { ("⏴", "Hide the preview panel") } else { ("⏵", "Show the preview panel") };
                 let size = egui::vec2(TAB_WIDTH, ui.available_height());
                 if ui.add_sized(size, egui::Button::new(label).frame(false)).on_hover_text(hint).clicked() {
                     toggle = true;

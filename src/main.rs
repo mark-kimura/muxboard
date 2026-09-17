@@ -1047,22 +1047,46 @@ impl eframe::App for App {
                 false
             }
         };
-        let panel = if settling {
-            egui::SidePanel::left("tree").resizable(false).exact_width(self.list_width)
-        } else if self.detail_open {
+        // Collapsed: if the window itself was resized (by its edge), adopt that width.
+        let mut resized_by_window = false;
+        if !settling && !self.detail_open {
+            let desired = (screen_w - TAB_WIDTH).max(MIN_LIST_WIDTH);
+            if (desired - self.list_width).abs() > 1.0 {
+                self.list_width = desired;
+                resized_by_window = true;
+            }
+        }
+        let panel = if self.detail_open {
+            if settling {
+                egui::SidePanel::left("tree").resizable(false).exact_width(self.list_width)
+            } else {
+                egui::SidePanel::left("tree")
+                    .resizable(true)
+                    .default_width(self.list_width)
+                    .min_width(MIN_LIST_WIDTH)
+                    .max_width((screen_w - TAB_WIDTH - MIN_DETAIL_WIDTH).max(MIN_LIST_WIDTH))
+            }
+        } else if resized_by_window {
+            egui::SidePanel::left("tree").resizable(true).exact_width(self.list_width)
+        } else {
+            // Draggable divider even when collapsed; the window follows the drag (below).
             egui::SidePanel::left("tree")
                 .resizable(true)
                 .default_width(self.list_width)
                 .min_width(MIN_LIST_WIDTH)
-                .max_width((screen_w - TAB_WIDTH - MIN_DETAIL_WIDTH).max(MIN_LIST_WIDTH))
-        } else {
-            egui::SidePanel::left("tree")
-                .resizable(false)
-                .exact_width((screen_w - TAB_WIDTH).max(MIN_LIST_WIDTH))
         };
         let resp = panel.show(ctx, |ui| self.tree(ui));
-        if !settling {
-            self.list_width = resp.response.rect.width();
+        let drawn = resp.response.rect.width();
+        if self.detail_open {
+            if !settling {
+                self.list_width = drawn;
+            }
+        } else if !resized_by_window && (drawn - self.list_width).abs() > 0.5 {
+            // The divider was dragged while collapsed: resize the window to match.
+            self.list_width = drawn;
+            let target = drawn + TAB_WIDTH;
+            self.pending_width = Some((target, 0));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(target, ctx.screen_rect().height())));
         }
         if self.detail_open {
             egui::CentralPanel::default().show(ctx, |ui| self.detail(ui));

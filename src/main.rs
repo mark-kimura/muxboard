@@ -21,9 +21,6 @@ const MIN_LIST_WIDTH: f32 = 180.0;
 const TAB_WIDTH: f32 = 22.0;
 const MIN_DETAIL_WIDTH: f32 = 420.0;
 const EXPANDED_SIZE: egui::Vec2 = egui::vec2(1000.0, 640.0);
-const DOUBLE_CLICK_WAIT: Duration = Duration::from_millis(280);
-/// Space in a project row besides the name: arrow, dot, spacing, panel margins.
-const ROW_EXTRA_WIDTH: f32 = 80.0;
 
 /// The one modal dialog that can be open at a time.
 enum Dialog {
@@ -66,10 +63,6 @@ struct App {
     pending_width: Option<(f32, u32)>,
     /// Window width being dragged to via the edge tab (collapsed mode only).
     drag_target: Option<f32>,
-    /// A single click on the tab waits this long for a possible second click before acting.
-    tab_click_at: Option<Instant>,
-    /// Draw the list at `list_width` exactly for one frame (after a reset), overriding the panel memory.
-    force_list_width: bool,
 }
 
 impl App {
@@ -292,26 +285,6 @@ impl App {
             self.pending_width = Some((size.x, 0));
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         }
-    }
-
-    /// Set the list width to the wider of the default and what the longest project name needs.
-    fn reset_list_width(&mut self, ctx: &egui::Context) {
-        let font = egui::TextStyle::Body.resolve(&ctx.style());
-        let longest = ctx.fonts(|f| {
-            self.projects
-                .iter()
-                .map(|p| f.layout_no_wrap(p.name.clone(), font.clone(), egui::Color32::WHITE).size().x)
-                .fold(0.0_f32, f32::max)
-        });
-        let w = (longest + ROW_EXTRA_WIDTH).max(DEFAULT_LIST_WIDTH).min(600.0);
-        self.list_width = w;
-        self.force_list_width = true;
-        if !self.detail_open {
-            let target = w + TAB_WIDTH;
-            self.pending_width = Some((target, 0));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(target, ctx.screen_rect().height())));
-        }
-        self.note("List width reset");
     }
 
     // ---------- menus ----------
@@ -1044,7 +1017,6 @@ impl eframe::App for App {
 
         // Narrow tab on the right edge that shows or hides the detail panel.
         let mut toggle = false;
-        let mut reset_width = false;
         egui::SidePanel::right("detail_tab")
             .exact_width(TAB_WIDTH)
             .resizable(false)
@@ -1055,26 +1027,9 @@ impl eframe::App for App {
                 let sense = if self.detail_open { egui::Sense::click() } else { egui::Sense::click_and_drag() };
                 let resp = ui
                     .add_sized(size, egui::Button::new(label).frame(false).sense(sense))
-                    .on_hover_text(if self.detail_open {
-                        format!("{hint}\nDouble-click: reset the list width")
-                    } else {
-                        "Click: show the preview panel\nDrag: change the width\nDouble-click: reset the list width".to_string()
-                    });
-                // Single click toggles; double click resets the list width. The single click is
-                // held for a moment so the first half of a double click does not toggle.
-                if resp.double_clicked() {
-                    self.tab_click_at = None;
-                    reset_width = true;
-                } else if resp.clicked() {
-                    self.tab_click_at = Some(Instant::now());
-                }
-                if let Some(t) = self.tab_click_at {
-                    if t.elapsed() >= DOUBLE_CLICK_WAIT {
-                        self.tab_click_at = None;
-                        toggle = true;
-                    } else {
-                        ui.ctx().request_repaint_after(DOUBLE_CLICK_WAIT);
-                    }
+                    .on_hover_text(if self.detail_open { hint } else { "Click: show the preview panel\nDrag: change the width" });
+                if resp.clicked() {
+                    toggle = true;
                 }
                 if !self.detail_open {
                     if resp.hovered() || resp.dragged() {
@@ -1098,9 +1053,6 @@ impl eframe::App for App {
         if toggle {
             self.toggle_detail(ctx);
         }
-        if reset_width {
-            self.reset_list_width(ctx);
-        }
 
         // The list is always a side panel, so its header stays put when the detail panel toggles.
         // Expanded: the divider is draggable. Collapsed: the list fills the window, so resizing
@@ -1119,8 +1071,7 @@ impl eframe::App for App {
                 false
             }
         };
-        let force = std::mem::take(&mut self.force_list_width);
-        let panel = if settling || force {
+        let panel = if settling {
             egui::SidePanel::left("tree").resizable(false).exact_width(self.list_width)
         } else if self.detail_open {
             egui::SidePanel::left("tree")

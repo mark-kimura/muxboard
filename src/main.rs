@@ -16,9 +16,10 @@ const GREEN: egui::Color32 = egui::Color32::from_rgb(90, 190, 110);
 const YELLOW: egui::Color32 = egui::Color32::from_rgb(230, 190, 60);
 const START_COMMAND: &str = "claude --continue";
 /// Window width when only the project list is shown, and the full size when the detail panel is open.
-const COLLAPSED_WIDTH: f32 = 320.0;
-const EXPANDED_SIZE: egui::Vec2 = egui::vec2(1000.0, 640.0);
+const LIST_WIDTH: f32 = 300.0;
 const TAB_WIDTH: f32 = 22.0;
+const COLLAPSED_WIDTH: f32 = LIST_WIDTH + TAB_WIDTH;
+const EXPANDED_SIZE: egui::Vec2 = egui::vec2(1000.0, 640.0);
 
 /// The one modal dialog that can be open at a time.
 enum Dialog {
@@ -1018,14 +1019,14 @@ impl eframe::App for App {
             self.toggle_detail(ctx);
         }
 
+        // The list is always the same fixed-width side panel, so nothing in it moves
+        // when the detail panel is shown or hidden.
+        egui::SidePanel::left("tree")
+            .exact_width(LIST_WIDTH)
+            .resizable(false)
+            .show(ctx, |ui| self.tree(ui));
         if self.detail_open {
-            egui::SidePanel::left("tree")
-                .default_width(280.0)
-                .min_width(180.0)
-                .show(ctx, |ui| self.tree(ui));
             egui::CentralPanel::default().show(ctx, |ui| self.detail(ui));
-        } else {
-            egui::CentralPanel::default().show(ctx, |ui| self.tree(ui));
         }
 
         self.dialogs(ctx);

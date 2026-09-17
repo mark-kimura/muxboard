@@ -4,7 +4,7 @@ mod projects;
 mod tmux;
 
 use eframe::egui;
-use projects::{Project, Settings};
+use projects::{Project, Settings, SortMode};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -178,6 +178,60 @@ impl App {
     fn command_for(&self, p: &Project) -> String {
         let c = p.command.trim();
         if c.is_empty() { self.settings.start_command.trim().to_string() } else { c.to_string() }
+    }
+
+    /// Projects in display order, each with its index in the stored list.
+    fn ordered_projects(&self) -> Vec<(usize, Project)> {
+        let mut v: Vec<(usize, Project)> = self.projects.iter().cloned().enumerate().collect();
+        match self.settings.sort {
+            SortMode::Manual => {}
+            SortMode::Alphabetical => v.sort_by_key(|(_, p)| p.name.to_lowercase()),
+            SortMode::Status => v.sort_by_key(|(_, p)| {
+                let key = projects::normalize(&p.path);
+                match self.matched.get(&key).and_then(|n| self.session(n)) {
+                    Some(s) if s.attached => 0,
+                    Some(_) => 1,
+                    None => 2,
+                }
+            }),
+        }
+        v
+    }
+
+    fn set_sort(&mut self, mode: SortMode) {
+        if self.settings.sort != mode {
+            self.settings.sort = mode;
+            if let Err(e) = projects::save_settings(&self.settings) {
+                self.fail(e);
+            }
+        }
+    }
+
+    fn sort_menu(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("Order projects by").weak().small());
+        let mut mode = self.settings.sort;
+        ui.radio_value(&mut mode, SortMode::Status, "Status: terminal open, running, idle");
+        ui.radio_value(&mut mode, SortMode::Alphabetical, "Name");
+        ui.radio_value(&mut mode, SortMode::Manual, "Manual (drag rows to reorder)");
+        if mode != self.settings.sort {
+            self.set_sort(mode);
+            ui.close_menu();
+        }
+    }
+
+    /// Move the project at stored index `from` so that it lands at display position `to`
+    /// (manual mode only, where display order equals stored order).
+    fn move_project(&mut self, from: usize, mut to: usize) {
+        if from >= self.projects.len() {
+            return;
+        }
+        let p = self.projects.remove(from);
+        if from < to {
+            to -= 1;
+        }
+        let to = to.min(self.projects.len());
+        self.projects.insert(to, p);
+        self.save_projects();
     }
 
     fn other_sessions(&self) -> Vec<Session> {
@@ -415,11 +469,26 @@ impl App {
                 ui.label(egui::RichText::new("No projects yet.").weak());
                 ui.label(egui::RichText::new("Use “Add project” to register a folder.").weak());
             }
-            let projects = self.projects.clone();
-            for p in &projects {
+            let manual = self.settings.sort == SortMode::Manual;
+            let ordered = self.ordered_projects();
+            // Top edge of each project row, in display order, plus the bottom of the last one:
+            // used to place the insertion line while dragging.
+            let mut edges: Vec<f32> = Vec::new();
+            let mut list_x = ui.max_rect().x_range();
+            for (stored_idx, p) in &ordered {
                 let key = projects::normalize(&p.path);
                 let session = self.matched.get(&key).cloned();
-                self.tree_project_row(ui, p, &key, session.as_deref());
+                let top = ui.cursor().top();
+                edges.push(top);
+                if manual {
+                    let id = egui::Id::new(("project_drag", &p.path));
+                    let r = ui.dnd_drag_source(id, *stored_idx, |ui| {
+                        self.tree_project_row(ui, p, &key, session.as_deref());
+                    });
+                    list_x = r.response.rect.x_range();
+                } else {
+                    self.tree_project_row(ui, p, &key, session.as_deref());
+                }
                 if let Some(name) = &session {
                     if !self.collapsed.contains(name) {
                         let wins = self.windows_of(name).to_vec();
@@ -429,6 +498,30 @@ impl App {
                     }
                 }
                 ui.add_space(2.0);
+            }
+            edges.push(ui.cursor().top());
+
+            if manual && !ordered.is_empty() {
+                let pointer_y = ui.ctx().pointer_interact_pos().map(|p| p.y);
+                let slot = |y: f32| -> usize {
+                    // Insert before the first row whose middle is below the pointer.
+                    (0..ordered.len())
+                        .find(|&i| y < (edges[i] + edges[i + 1]) / 2.0)
+                        .unwrap_or(ordered.len())
+                };
+                let dragging = egui::DragAndDrop::has_payload_of_type::<usize>(ui.ctx());
+                let released = ui.ctx().input(|i| i.pointer.any_released());
+                if dragging {
+                    if let Some(y) = pointer_y {
+                        let i = slot(y);
+                        ui.painter().hline(list_x, edges[i], egui::Stroke::new(2.0, ui.visuals().selection.bg_fill));
+                    }
+                    if released {
+                        if let (Some(from), Some(y)) = (egui::DragAndDrop::take_payload::<usize>(ui.ctx()), pointer_y) {
+                            self.move_project(*from, slot(y));
+                        }
+                    }
+                }
             }
 
             let others = self.other_sessions();
@@ -447,6 +540,11 @@ impl App {
                     ui.add_space(2.0);
                 }
             }
+
+            // Whatever space is left below the list: right-click for the ordering menu.
+            let leftover = egui::vec2(ui.available_width(), ui.available_height().max(60.0));
+            let (_, resp) = ui.allocate_exact_size(leftover, egui::Sense::click());
+            resp.context_menu(|ui| self.sort_menu(ui));
         });
     }
 
@@ -508,6 +606,7 @@ impl App {
                     p.path.display()
                 ),
             };
+            let hover = if self.settings.sort == SortMode::Manual { format!("{hover}\nDrag: reorder") } else { hover };
             let resp = ui
                 .with_layout(Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(is_sel, text)))
                 .inner

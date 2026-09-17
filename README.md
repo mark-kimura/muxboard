@@ -10,6 +10,7 @@ By default the window is a narrow project list. A tab on its right edge opens th
 
 ## How to do things
 - "+ Add project" opens a folder picker. The project name defaults to the folder name.
+- Ordering: right-click the empty space under the list to choose. "Status" (default) puts projects with a terminal open first, then running ones, then idle ones, each group in the order added. "Name" sorts alphabetically. "Manual" keeps the stored order and lets you drag rows to reorder.
 - Double-click a project that is not running: a tmux session is created in its folder, the start command is typed into it, and a terminal opens on it. The default start command is `claude --continue`; change it with the gear button (Settings), or per project in "Edit project". A blank command gives a plain shell, so the app works for any terminal program (vim, htop, ...).
 - Double-click a running project (or window): a terminal opens on it.
 - Right-click any row for its actions. The same actions are in the "Actions" menu on the right.

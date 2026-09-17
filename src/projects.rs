@@ -61,9 +61,22 @@ pub fn normalize(p: &Path) -> PathBuf {
 
 // ---- settings ----
 
+/// How the project list is ordered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SortMode {
+    /// Projects with a terminal open first, then running ones without a terminal, then the rest;
+    /// within each group, the order they were added.
+    #[default]
+    Status,
+    Alphabetical,
+    /// The stored order; changed by dragging rows.
+    Manual,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub sort: SortMode,
     /// Command typed into a new session when a project is started (unless the project overrides it).
     pub start_command: String,
     /// Terminal program to open sessions in. Blank means: use $TERMINAL or the first one found.
@@ -72,7 +85,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { start_command: "claude --continue".into(), terminal: String::new() }
+        Settings { sort: SortMode::default(), start_command: "claude --continue".into(), terminal: String::new() }
     }
 }
 

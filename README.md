@@ -20,7 +20,7 @@ Left: the default, a narrow project list. Right: the same window with the previe
 - **Ordering.** By status (default), by name, or manual with drag-to-reorder. Right-click the empty space under the list.
 - **Small by default.** The window opens as a narrow list. A tab on its right edge opens the preview panel; drag the tab to change the width.
 
-tmux sessions that belong to no project are listed under "Other tmux sessions" with the same actions.
+tmux sessions that belong to no project are listed under "Other tmux sessions" with the same actions, plus "Add as project", which registers the session's folder under the session's name.
 
 ## Install
 

@@ -322,12 +322,20 @@ impl App {
         let Some(folder) = rfd::FileDialog::new().set_title("Choose a project folder").pick_folder() else {
             return;
         };
+        self.add_project(folder, None);
+    }
+
+    /// Register a folder as a project. `name` overrides the default (the folder name).
+    fn add_project(&mut self, folder: PathBuf, name: Option<String>) {
         let key = projects::normalize(&folder);
         if self.projects.iter().any(|p| projects::normalize(&p.path) == key) {
             self.fail("That folder is already registered");
             return;
         }
-        let p = Project::from_path(folder);
+        let mut p = Project::from_path(folder);
+        if let Some(n) = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
+            p.name = n;
+        }
         let name = p.name.clone();
         self.projects.push(p);
         self.save_projects();
@@ -430,6 +438,15 @@ impl App {
         if let Some(path) = self.session(name).map(|s| s.path.clone()).filter(|_| standalone) {
             if !path.is_empty() && ui.button("📁  Open folder").clicked() {
                 self.open_folder(std::path::Path::new(&path));
+                ui.close_menu();
+            }
+            if !path.is_empty()
+                && ui
+                    .button("+  Add as project")
+                    .on_hover_text(format!("Register {path} as a project named “{name}”"))
+                    .clicked()
+            {
+                self.add_project(PathBuf::from(&path), Some(name.to_string()));
                 ui.close_menu();
             }
         }

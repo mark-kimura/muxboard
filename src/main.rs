@@ -262,9 +262,21 @@ impl App {
 
     // ---------- actions ----------
 
+    /// Show the session (or one of its windows) in a terminal. If a terminal is already open on the
+    /// session and a window is named, the open terminal is switched to that window instead of
+    /// opening a second terminal; every terminal on a session shows the same active window.
     fn open_terminal(&mut self, session: &str, window: Option<u32>) {
+        let attached = self.session(session).map(|s| s.attached).unwrap_or(false);
         if let Some(w) = window {
-            let _ = tmux::select_window(&format!("{session}:{w}"));
+            let r = tmux::select_window(&format!("{session}:{w}"));
+            if attached {
+                self.apply(r, &format!("Switched the open terminal to window {w}"));
+                return;
+            }
+            if let Err(e) = r {
+                self.fail(e);
+                return;
+            }
         }
         let r = tmux::attach_in_terminal(session, Some(&self.settings.terminal));
         self.apply(r, "Opened a terminal");
@@ -426,7 +438,7 @@ impl App {
     }
 
     fn window_menu(&mut self, ui: &mut egui::Ui, session: &str, w: &Window) {
-        if ui.button("▶  Open in terminal here").clicked() {
+        if ui.button("▶  Show in terminal").clicked() {
             self.open_terminal(session, Some(w.index));
             ui.close_menu();
         }
@@ -696,9 +708,17 @@ impl App {
         let mut clicked = false;
         let mut double = false;
         ui.horizontal(|ui| {
-            ui.add_space(26.0);
-            let mark = if w.active { "▶" } else { "   " };
-            let mut text = egui::RichText::new(format!("{mark} {}  {}", w.index, w.name));
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(30.0);
+            // Active window: small filled square in the selection colour. Others: faint outline.
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 18.0), egui::Sense::hover());
+            let sq = egui::Rect::from_center_size(rect.center(), egui::vec2(7.0, 7.0));
+            if w.active {
+                ui.painter().rect_filled(sq, 1.0, ui.visuals().selection.bg_fill);
+            } else {
+                ui.painter().rect_stroke(sq, 1.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
+            }
+            let mut text = egui::RichText::new(format!("{}  {}", w.index, w.name));
             if !w.active {
                 text = text.weak();
             }
@@ -706,11 +726,11 @@ impl App {
                 .with_layout(Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(is_sel, text)))
                 .inner
                 .on_hover_text(format!(
-                    "Window {}: {}\nRunning: {}{}\n\nDouble-click: open in terminal here\nRight-click: more",
+                    "Window {}: {}\nRunning: {}{}\n\nDouble-click: show this window in the terminal\nRight-click: more",
                     w.index,
                     w.name,
                     w.command,
-                    if w.active { "\nThis is the active window" } else { "" }
+                    if w.active { "\nThis is the window the terminal shows" } else { "" }
                 ));
             if resp.clicked() {
                 clicked = true;

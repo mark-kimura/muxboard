@@ -2,6 +2,11 @@
 name = "muxboard"
 version = "0.1.0"
 edition = "2024"
+description = "A small desktop board for your projects: start, preview and manage a tmux session in each one, no tmux shortcuts needed"
+license = "MIT"
+repository = "https://github.com/mark-kimura/muxboard"
+keywords = ["tmux", "gui", "egui", "claude-code", "terminal"]
+categories = ["command-line-utilities", "gui"]
 
 [dependencies]
 dirs = "5"

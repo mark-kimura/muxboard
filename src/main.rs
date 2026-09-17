@@ -68,7 +68,15 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        App { projects: projects::load(), settings: projects::load_settings(), expanded_size: EXPANDED_SIZE, list_width: DEFAULT_LIST_WIDTH, ..Default::default() }
+        App {
+            projects: projects::load(),
+            settings: projects::load_settings(),
+            expanded_size: EXPANDED_SIZE,
+            list_width: DEFAULT_LIST_WIDTH,
+            // MUXBOARD_EXPANDED=1 starts with the preview panel open.
+            detail_open: std::env::var("MUXBOARD_EXPANDED").map(|v| v == "1").unwrap_or(false),
+            ..Default::default()
+        }
     }
 
     // ---------- data ----------
@@ -1336,7 +1344,11 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Muxboard")
-            .with_inner_size([DEFAULT_LIST_WIDTH + TAB_WIDTH, EXPANDED_SIZE.y])
+            .with_inner_size(if std::env::var("MUXBOARD_EXPANDED").map(|v| v == "1").unwrap_or(false) {
+                [EXPANDED_SIZE.x, EXPANDED_SIZE.y]
+            } else {
+                [DEFAULT_LIST_WIDTH + TAB_WIDTH, EXPANDED_SIZE.y]
+            })
             .with_min_inner_size([MIN_LIST_WIDTH + TAB_WIDTH, 300.0]),
         ..Default::default()
     };

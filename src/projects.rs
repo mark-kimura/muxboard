@@ -33,11 +33,16 @@ impl Project {
     }
 }
 
+/// The config folder: `$MUXBOARD_CONFIG_DIR` if set, else `~/.config/muxboard`.
+pub fn config_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("MUXBOARD_CONFIG_DIR") {
+        return PathBuf::from(d);
+    }
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("muxboard")
+}
+
 pub fn config_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("muxboard")
-        .join("projects.json")
+    config_dir().join("projects.json")
 }
 
 pub fn load() -> Vec<Project> {

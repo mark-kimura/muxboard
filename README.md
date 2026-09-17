@@ -1,31 +1,67 @@
 # Muxboard
 
-A desktop window that lists your projects and starts or manages a tmux session in each one, running the terminal program of your choice (Claude Code by default). No tmux keyboard shortcuts needed.
+A small desktop board for your projects. Each project is a folder; Muxboard starts a tmux session in it, shows you what is running, and lets you open it in a terminal, all with clicks. No tmux keyboard shortcuts to remember.
 
-## Layout
-By default the window is a narrow project list. A tab on its right edge opens the preview panel and widens the window; clicking the tab again hides the panel and shrinks the window back.
+It was built to juggle several [Claude Code](https://claude.com/claude-code) sessions across projects, but the start command is yours to set, so it works for any terminal program: `claude`, `vim`, `htop`, a dev server, a shell.
 
-- **Left**: your registered projects. A project is a folder. If a tmux session was started in that folder, the project shows it: a green dot means a terminal window is open on it, a yellow dot means it runs with no terminal open, and a dimmed name with a faint ring means nothing is running. Windows of a running session are nested under the project. tmux sessions that belong to no project are listed under "Other tmux sessions".
-- **Right**: the selected project, one primary button, an "Actions" menu, a live view of the terminal text refreshed every second, and a command box underneath.
+![Muxboard](docs/screenshot.png)
 
-## How to do things
-- "+ Add project" opens a folder picker. The project name defaults to the folder name.
-- Ordering: right-click the empty space under the list to choose. "Status" (default) puts projects with a terminal open first, then running ones, then idle ones, each group in the order added. "Name" sorts alphabetically. "Manual" keeps the stored order and lets you drag rows to reorder.
-- Double-click a project that is not running: a tmux session is created in its folder, the start command is typed into it, and a terminal opens on it. The default start command is `claude --continue`; change it with the gear button (Settings), or per project in "Edit project". A blank command gives a plain shell, so the app works for any terminal program (vim, htop, ...).
-- Double-click a running project (or window): a terminal opens on it.
-- Right-click any row for its actions. The same actions are in the "Actions" menu on the right.
-- Project actions: start session (or, when running: open in terminal, new window, close terminals, kill session), open folder in the file manager, edit project (name, folder, start command), remove from list. Renaming a project also renames its running session.
-- Window actions: show in terminal (switches the open terminal, or opens one if none), make active, rename, kill. A filled square marks the window the terminal currently shows.
-- Command box: type a command line and press Enter. It is typed into the selected window followed by Enter. For anything interactive, open the terminal.
-- Killing anything asks for confirmation first. Removing a project only edits the list; the folder and any session are untouched.
+## What it does
 
-The project list is stored in `~/.config/muxboard/projects.json` and the settings in `~/.config/muxboard/settings.json`.
+- **Project list.** Register folders. A green dot means a terminal window is open on the project's session, a yellow dot means the session runs with no terminal open, a dimmed name means nothing is running. Windows of a running session are nested under the project.
+- **Start with a double-click.** For an idle project, Muxboard creates a tmux session in its folder, types the start command into it (default `claude --continue`), and opens a terminal on it. For a running project, it opens a terminal, or switches the one already open to the window you clicked.
+- **Live preview.** A read-only view of the selected window's text, including scrollback, refreshed every second. A command box underneath types a line into that window.
+- **Session and window actions** by right-click: new window, rename, make active, close terminals while keeping the session, kill, open the folder in your file manager.
+- **Ordering.** By status (default), by name, or manual with drag-to-reorder. Right-click the empty space under the list.
+- **Small by default.** The window opens as a narrow list. A tab on its right edge opens the preview panel; drag the tab to change the width.
 
-"Open in terminal" uses the terminal program from Settings if set, else `$TERMINAL` if set, otherwise gnome-terminal, kitty, alacritty, wezterm, konsole, xfce4-terminal, tilix, foot, xterm, in that order.
+tmux sessions that belong to no project are listed under "Other tmux sessions" with the same actions.
 
-## Build and run
-```
+## Install
+
+Requirements: Linux with X11 or Wayland, `tmux`, a terminal emulator, and a Rust toolchain ([rustup](https://rustup.rs)).
+
+```sh
+git clone https://github.com/mark-kimura/muxboard.git
+cd muxboard
 cargo build --release
 ./target/release/muxboard
 ```
-Requires `tmux` and `claude` on the PATH.
+
+On Debian/Ubuntu/Mint the GUI library needs these packages to build:
+
+```sh
+sudo apt install build-essential pkg-config libgtk-3-dev libxkbcommon-dev libssl-dev
+```
+
+To add it to the desktop menu, create `~/.local/share/applications/muxboard.desktop`:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Muxboard
+Comment=Start and manage tmux sessions per project
+Exec=/full/path/to/muxboard/target/release/muxboard
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+```
+
+## Settings
+
+The gear button opens Settings:
+
+- **Default start command.** Typed into a new session when a project is started. Blank means a plain shell.
+- **Terminal program.** Which terminal to open sessions in. Blank means `$TERMINAL` if set, otherwise the first of gnome-terminal, kitty, alacritty, wezterm, konsole, xfce4-terminal, tilix, foot, xterm found on the machine.
+
+"Edit project" on a project's right-click menu sets its name, folder, and a start command that overrides the default.
+
+Files: `~/.config/muxboard/projects.json` and `~/.config/muxboard/settings.json`. Set `MUXBOARD_CONFIG_DIR` to use a different folder. `MUXBOARD_EXPANDED=1` starts with the preview panel open.
+
+## How it works
+
+Muxboard is a thin layer over the `tmux` command line: `list-sessions`, `list-windows`, `capture-pane`, `send-keys`, `new-session`, `select-window`, and so on. A project is matched to a session by the folder the session was started in. The GUI is [egui](https://github.com/emilk/egui). Written in Rust.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

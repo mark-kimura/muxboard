@@ -564,7 +564,7 @@ impl App {
             let others = self.other_sessions();
             if !others.is_empty() {
                 ui.add_space(10.0);
-                ui.label(egui::RichText::new("Other tmux sessions").weak());
+                ui.label(egui::RichText::new("Unassigned tmux sessions").weak());
                 ui.separator();
                 for s in &others {
                     self.tree_session_row(ui, s);

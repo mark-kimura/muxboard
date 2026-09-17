@@ -36,7 +36,7 @@ impl Project {
 pub fn config_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("tmux-gui")
+        .join("muxboard")
         .join("projects.json")
 }
 

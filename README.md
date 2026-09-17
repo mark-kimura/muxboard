@@ -1,6 +1,6 @@
-# tmux-gui — Claude Code projects
+# Muxboard
 
-A desktop window that lists your projects and starts or manages a Claude Code session in each one, using tmux underneath. No tmux keyboard shortcuts needed.
+A desktop window that lists your projects and starts or manages a tmux session in each one, running the terminal program of your choice (Claude Code by default). No tmux keyboard shortcuts needed.
 
 ## Layout
 By default the window is a narrow project list. A tab on its right edge opens the preview panel and widens the window; clicking the tab again hides the panel and shrinks the window back.
@@ -18,13 +18,13 @@ By default the window is a narrow project list. A tab on its right edge opens th
 - Command box: type a command line and press Enter. It is typed into the selected window followed by Enter. For anything interactive, open the terminal.
 - Killing anything asks for confirmation first. Removing a project only edits the list; the folder and any session are untouched.
 
-The project list is stored in `~/.config/tmux-gui/projects.json` and the settings in `~/.config/tmux-gui/settings.json`.
+The project list is stored in `~/.config/muxboard/projects.json` and the settings in `~/.config/muxboard/settings.json`.
 
 "Open in terminal" uses the terminal program from Settings if set, else `$TERMINAL` if set, otherwise gnome-terminal, kitty, alacritty, wezterm, konsole, xfce4-terminal, tilix, foot, xterm, in that order.
 
 ## Build and run
 ```
 cargo build --release
-./target/release/tmux-gui
+./target/release/muxboard
 ```
 Requires `tmux` and `claude` on the PATH.

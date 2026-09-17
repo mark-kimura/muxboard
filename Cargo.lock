@@ -1883,6 +1883,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "muxboard"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "eframe",
+ "egui",
+ "rfd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "naga"
 version = "22.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3119,18 +3131,6 @@ checksum = "b1e27c91459209c2986af3dcf603a5a74a4368754ce37414f59acc971167f643"
 dependencies = [
  "displaydoc",
  "zerovec",
-]
-
-[[package]]
-name = "tmux-gui"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "eframe",
- "egui",
- "rfd",
- "serde",
- "serde_json",
 ]
 
 [[package]]

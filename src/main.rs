@@ -1216,13 +1216,13 @@ impl eframe::App for App {
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Claude Code projects")
+            .with_title("Muxboard")
             .with_inner_size([DEFAULT_LIST_WIDTH + TAB_WIDTH, EXPANDED_SIZE.y])
             .with_min_inner_size([MIN_LIST_WIDTH + TAB_WIDTH, 300.0]),
         ..Default::default()
     };
     eframe::run_native(
-        "tmux-gui",
+        "muxboard",
         options,
         Box::new(|cc| {
             install_fonts(&cc.egui_ctx);

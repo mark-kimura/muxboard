@@ -287,13 +287,29 @@ impl App {
         }
     }
 
+    /// Open a folder in the desktop's default file manager (Nemo on Mint) via xdg-open.
+    fn open_folder(&mut self, path: &std::path::Path) {
+        let r = std::process::Command::new("xdg-open")
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("could not run xdg-open: {e}"));
+        match r {
+            Ok(()) => self.note(format!("Opened {}", path.display())),
+            Err(e) => self.fail(e),
+        }
+    }
+
     // ---------- menus ----------
 
     fn project_menu(&mut self, ui: &mut egui::Ui, key: &PathBuf) {
         let session = self.matched.get(key).cloned();
         match &session {
             Some(name) => {
-                self.session_menu(ui, name);
+                self.session_menu(ui, name, false);
             }
             None => {
                 if ui.button("▶  Start Claude Code").clicked() {
@@ -302,13 +318,19 @@ impl App {
                 }
             }
         }
+        if ui.button("📁  Open folder").clicked() {
+            if let Some(path) = self.project_at(key).map(|p| p.path.clone()) {
+                self.open_folder(&path);
+            }
+            ui.close_menu();
+        }
         ui.separator();
         if ui.button("✏  Rename project…").clicked() {
             let text = self.project_at(key).map(|p| p.name.clone()).unwrap_or_default();
             self.dialog = Some(Dialog::RenameProject { path: key.clone(), text });
             ui.close_menu();
         }
-        if ui.button("📁  Change folder…").clicked() {
+        if ui.button("✎  Change folder…").clicked() {
             self.change_folder(key);
             ui.close_menu();
         }
@@ -318,7 +340,8 @@ impl App {
         }
     }
 
-    fn session_menu(&mut self, ui: &mut egui::Ui, name: &str) {
+    /// `standalone` is true for a session that belongs to no project; then the folder item is shown here.
+    fn session_menu(&mut self, ui: &mut egui::Ui, name: &str, standalone: bool) {
         let attached = self.session(name).map(|s| s.attached).unwrap_or(false);
         if ui.button("▶  Open in terminal").clicked() {
             self.open_terminal(name, None);
@@ -331,6 +354,12 @@ impl App {
         if self.selected_project.is_none() && ui.button("✏  Rename session…").clicked() {
             self.dialog = Some(Dialog::RenameSession { old: name.into(), text: name.into() });
             ui.close_menu();
+        }
+        if let Some(path) = self.session(name).map(|s| s.path.clone()).filter(|_| standalone) {
+            if !path.is_empty() && ui.button("📁  Open folder").clicked() {
+                self.open_folder(std::path::Path::new(&path));
+                ui.close_menu();
+            }
         }
         if attached && ui.button("⏏  Close terminals (keep running)").clicked() {
             let r = tmux::detach_clients(name);
@@ -544,7 +573,7 @@ impl App {
                 double = true;
             }
             let name = s.name.clone();
-            resp.context_menu(|ui| self.session_menu(ui, &name));
+            resp.context_menu(|ui| self.session_menu(ui, &name, true));
         });
 
         if toggle {
@@ -693,7 +722,7 @@ impl App {
             ui.menu_button("Actions ⏷", |ui| match (&window, &project) {
                 (Some(w), _) => self.window_menu(ui, &name, w),
                 (None, Some((key, _))) => self.project_menu(ui, key),
-                (None, None) => self.session_menu(ui, &name),
+                (None, None) => self.session_menu(ui, &name, true),
             });
         });
         ui.add_space(8.0);

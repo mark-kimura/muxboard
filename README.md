@@ -4,7 +4,12 @@ A small desktop board for your projects. Each project is a folder; Muxboard star
 
 It was built to juggle several [Claude Code](https://claude.com/claude-code) sessions across projects, but the start command is yours to set, so it works for any terminal program: `claude`, `vim`, `htop`, a dev server, a shell.
 
-![Muxboard](docs/screenshot.png)
+<p>
+  <img src="docs/screenshot-collapsed.png" alt="Muxboard collapsed: the narrow project list" height="400">
+  <img src="docs/screenshot.png" alt="Muxboard expanded: project list, live preview and command box" height="400">
+</p>
+
+Left: the default, a narrow project list. Right: the same window with the preview panel opened from the edge tab.
 
 ## What it does
 

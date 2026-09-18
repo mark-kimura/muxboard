@@ -13,7 +13,7 @@ Left: the default, a narrow project list. Right: the same window with the previe
 
 ## What it does
 
-- **Project list.** Register folders. A green dot means a terminal window is open on the project's session, a yellow dot means the session runs with no terminal open, a dimmed name means nothing is running. Windows of a running session are nested under the project.
+- **Project list.** Register folders. A green dot means a terminal window is open on the project's session, a yellow dot means the session runs with no terminal open, a dimmed name means nothing is running. Windows of a running session are nested under the project. A spinner marks a window, and its project, while the program in it is producing output; when the spinner stops, the program has finished or is waiting for you.
 - **Start with a double-click.** For an idle project, Muxdock creates a tmux session in its folder, types the start command into it (default `claude --continue`), and opens a terminal on it. For a running project, it opens a terminal, or switches the one already open to the window you clicked.
 - **Live preview.** A read-only view of the selected window's text, including scrollback, refreshed every second. A command box underneath types a line into that window.
 - **Session and window actions** by right-click: new window, rename, make active, close terminals while keeping the session, kill, open the folder in your file manager.

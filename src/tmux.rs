@@ -18,7 +18,23 @@ pub struct Window {
     pub name: String,
     pub active: bool,
     pub command: String,
+    /// When the window's screen text last changed, in seconds since the Unix epoch.
+    pub activity: u64,
 }
+
+impl Window {
+    /// True while the program in the window is producing output (screen changed in the last few seconds).
+    pub fn is_working(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.activity > 0 && now.saturating_sub(self.activity) <= WORKING_WINDOW_SECS
+    }
+}
+
+/// A window counts as working if its screen changed within this many seconds.
+const WORKING_WINDOW_SECS: u64 = 3;
 
 /// Full path of the tmux binary. An app started from a desktop menu or the macOS Dock does not get
 /// the shell's PATH, so Homebrew's and other common install locations are tried as well.
@@ -206,7 +222,7 @@ pub fn select_window(target: &str) -> Result<(), String> {
 
 /// Windows of every session, grouped by session name (order preserved from tmux).
 pub fn list_all_windows() -> Result<Vec<(String, Window)>, String> {
-    let fmt = "#{session_name}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_current_command}";
+    let fmt = "#{session_name}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_current_command}\t#{window_activity}";
     let text = match run(&["list-windows", "-a", "-F", fmt]) {
         Ok(t) => t,
         Err(e) if e.contains("no server running") || e.contains("No such file") => return Ok(vec![]),
@@ -224,6 +240,7 @@ pub fn list_all_windows() -> Result<Vec<(String, Window)>, String> {
                     name: f.next()?.to_string(),
                     active: f.next()? == "1",
                     command: f.next().unwrap_or("").to_string(),
+                    activity: f.next().and_then(|t| t.parse().ok()).unwrap_or(0),
                 },
             ))
         })

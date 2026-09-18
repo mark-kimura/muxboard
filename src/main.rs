@@ -602,6 +602,20 @@ impl App {
         }
     }
 
+    /// A full-width selectable row label; when `working`, a small spinner sits at its right end.
+    fn row_label(ui: &mut egui::Ui, selected: bool, text: impl Into<egui::WidgetText>, working: bool) -> egui::Response {
+        const SPINNER: f32 = 14.0;
+        let reserve = if working { SPINNER + 8.0 } else { 0.0 };
+        let size = egui::vec2((ui.available_width() - reserve).max(20.0), ui.spacing().interact_size.y);
+        let resp = ui
+            .allocate_ui_with_layout(size, Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(selected, text)))
+            .inner;
+        if working {
+            ui.add(egui::Spinner::new().size(SPINNER)).on_hover_text("Working: its screen is changing");
+        }
+        resp
+    }
+
     fn row_layout() -> egui::Layout {
         egui::Layout::left_to_right(egui::Align::Center).with_main_align(egui::Align::Min).with_main_justify(true)
     }
@@ -645,10 +659,8 @@ impl App {
                 ),
             };
             let hover = if self.settings.sort == SortMode::Manual { format!("{hover}\nDrag: reorder") } else { hover };
-            let resp = ui
-                .with_layout(Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(is_sel, text)))
-                .inner
-                .on_hover_text(hover);
+            let working = session.map(|n| self.windows_of(n).iter().any(|w| w.is_working())).unwrap_or(false);
+            let resp = Self::row_label(ui, is_sel, text, working).on_hover_text(hover);
             if resp.clicked() {
                 clicked = true;
             }
@@ -693,9 +705,8 @@ impl App {
             }
             Self::status_dot(ui, Some(s));
             let text = egui::RichText::new(&s.name).strong();
-            let resp = ui
-                .with_layout(Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(is_sel, text)))
-                .inner
+            let working = self.windows_of(&s.name).iter().any(|w| w.is_working());
+            let resp = Self::row_label(ui, is_sel, text, working)
                 .on_hover_text(format!(
                     "{}\n{}\n{} window{}\nCreated {}\n\nDouble-click: open in terminal\nRight-click: more",
                     s.path,
@@ -748,9 +759,7 @@ impl App {
             if !w.active {
                 text = text.weak();
             }
-            let resp = ui
-                .with_layout(Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(is_sel, text)))
-                .inner
+            let resp = Self::row_label(ui, is_sel, text, w.is_working())
                 .on_hover_text(format!(
                     "Window {}: {}\nRunning: {}{}\n\nDouble-click: show this window in the terminal\nRight-click: more",
                     w.index,

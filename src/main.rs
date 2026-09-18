@@ -365,16 +365,17 @@ impl App {
         }
     }
 
-    /// Open a folder in the desktop's default file manager (Nemo on Mint) via xdg-open.
+    /// Open a folder in the desktop's default file manager: Finder on macOS, xdg-open elsewhere.
     fn open_folder(&mut self, path: &std::path::Path) {
-        let r = std::process::Command::new("xdg-open")
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let r = std::process::Command::new(opener)
             .arg(path)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("could not run xdg-open: {e}"));
+            .map_err(|e| format!("could not run {opener}: {e}"));
         match r {
             Ok(()) => self.note(format!("Opened {}", path.display())),
             Err(e) => self.fail(e),
@@ -1022,12 +1023,16 @@ impl App {
                                 egui::TextEdit::singleline(&mut st.terminal)
                                     .desired_width(320.0)
                                     .font(egui::TextStyle::Monospace)
-                                    .hint_text("blank: $TERMINAL or the first one found"),
+                                    .hint_text(if cfg!(target_os = "macos") { "blank: iTerm or Terminal" } else { "blank: $TERMINAL or the first one found" }),
                             );
                             ui.end_row();
                         });
                         ui.label(egui::RichText::new("The start command is typed into a new tmux session when a project is started, e.g. “claude --continue”, “vim”, or “htop”. Each project can override it in Edit project.").weak().small());
-                        ui.label(egui::RichText::new("Terminal program: gnome-terminal, kitty, alacritty, wezterm, konsole, xfce4-terminal, tilix, foot, or xterm.").weak().small());
+                        ui.label(egui::RichText::new(if cfg!(target_os = "macos") {
+                            "Terminal program: Terminal, iTerm, kitty, alacritty, or wezterm. Blank: iTerm if installed, else Terminal."
+                        } else {
+                            "Terminal program: gnome-terminal, kitty, alacritty, wezterm, konsole, xfce4-terminal, tilix, foot, or xterm."
+                        }).weak().small());
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             if ui.button("Cancel").clicked() {
@@ -1214,12 +1219,17 @@ fn install_fonts(ctx: &egui::Context) {
     let mut defs = FontDefinitions::default();
 
     // (name, candidate paths, face index inside a .ttc collection)
+    // Linux paths first, then macOS. Whatever is missing is skipped.
     let candidates: &[(&str, &[&str], u32)] = &[
         ("dejavu_mono", &["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "/usr/share/fonts/TTF/DejaVuSansMono.ttf"], 0),
+        ("menlo", &["/System/Library/Fonts/Menlo.ttc"], 0),
         ("noto_symbols2", &["/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf"], 0),
         ("noto_symbols", &["/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf"], 0),
         ("noto_cjk_mono", &["/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc"], 5),
+        ("apple_symbols", &["/System/Library/Fonts/Apple Symbols.ttf"], 0),
+        ("arial_unicode", &["/System/Library/Fonts/Supplemental/Arial Unicode.ttf"], 0),
     ];
+    const MONO_PRIMARY: &[&str] = &["dejavu_mono", "menlo"];
 
     let mut loaded: Vec<String> = Vec::new();
     for (name, paths, index) in candidates {
@@ -1235,17 +1245,17 @@ fn install_fonts(ctx: &egui::Context) {
     }
 
     let mono = defs.families.entry(FontFamily::Monospace).or_default();
-    if loaded.iter().any(|n| n == "dejavu_mono") {
-        mono.insert(0, "dejavu_mono".to_string());
+    if let Some(primary) = loaded.iter().find(|n| MONO_PRIMARY.contains(&n.as_str())) {
+        mono.insert(0, primary.clone());
     }
     for n in &loaded {
-        if n != "dejavu_mono" {
+        if !MONO_PRIMARY.contains(&n.as_str()) {
             mono.push(n.clone());
         }
     }
     let prop = defs.families.entry(FontFamily::Proportional).or_default();
     for n in &loaded {
-        if n != "dejavu_mono" {
+        if !MONO_PRIMARY.contains(&n.as_str()) {
             prop.push(n.clone());
         }
     }

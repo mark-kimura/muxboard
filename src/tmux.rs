@@ -20,8 +20,25 @@ pub struct Window {
     pub command: String,
 }
 
+/// Full path of the tmux binary. An app started from a desktop menu or the macOS Dock does not get
+/// the shell's PATH, so Homebrew's and other common install locations are tried as well.
+pub fn tmux_bin() -> &'static str {
+    static BIN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BIN.get_or_init(|| {
+        if find_in_path("tmux") {
+            return "tmux".to_string();
+        }
+        for p in ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/home/linuxbrew/.linuxbrew/bin/tmux", "/usr/bin/tmux"] {
+            if std::path::Path::new(p).is_file() {
+                return p.to_string();
+            }
+        }
+        "tmux".to_string()
+    })
+}
+
 fn run(args: &[&str]) -> Result<String, String> {
-    let out = Command::new("tmux")
+    let out = Command::new(tmux_bin())
         .args(args)
         .stdin(Stdio::null())
         .output()
@@ -109,10 +126,26 @@ fn find_in_path(bin: &str) -> bool {
 
 /// Open a new terminal window attached to the session. Uses `preferred` if given, else `$TERMINAL`, else the first terminal found.
 pub fn attach_in_terminal(name: &str, preferred: Option<&str>) -> Result<(), String> {
-    let tmux_cmd = ["tmux", "attach-session", "-t", name];
-
-    let mut candidates: Vec<(String, Vec<&str>)> = Vec::new();
     let preferred = preferred.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+    #[cfg(target_os = "macos")]
+    {
+        // Terminal.app and iTerm2 have no command-line flag to run a command in a new window,
+        // so they are driven through AppleScript. Anything else is treated as a CLI terminal.
+        let choice = preferred.clone().unwrap_or_else(|| {
+            if std::path::Path::new("/Applications/iTerm.app").exists() { "iTerm".into() } else { "Terminal".into() }
+        });
+        let lower = choice.to_lowercase();
+        if lower == "terminal" || lower == "terminal.app" {
+            return mac_terminal_app(name);
+        }
+        if lower == "iterm" || lower == "iterm2" || lower == "iterm.app" {
+            return mac_iterm(name);
+        }
+    }
+
+    let tmux_cmd = [tmux_bin(), "attach-session", "-t", name];
+    let mut candidates: Vec<(String, Vec<&str>)> = Vec::new();
     if let Some(t) = preferred.or_else(|| std::env::var("TERMINAL").ok()) {
         if !t.trim().is_empty() {
             let base = std::path::Path::new(&t)
@@ -134,7 +167,7 @@ pub fn attach_in_terminal(name: &str, preferred: Option<&str>) -> Result<(), Str
     }
 
     let Some((bin, pre)) = candidates.into_iter().next() else {
-        return Err("no terminal emulator found (set $TERMINAL)".into());
+        return Err("no terminal emulator found (set one in Settings or $TERMINAL)".into());
     };
 
     Command::new(&bin)
@@ -202,4 +235,54 @@ pub fn send_line(target: &str, line: &str) -> Result<(), String> {
     // `-l` sends the text literally (no key-name interpretation), then a separate Enter.
     run(&["send-keys", "-t", target, "-l", line])?;
     run(&["send-keys", "-t", target, "Enter"]).map(|_| ())
+}
+
+/// The attach command as one shell line, with the session name single-quoted for the shell.
+#[cfg(target_os = "macos")]
+fn attach_shell_line(name: &str) -> String {
+    let quoted = format!("'{}'", name.replace('\'', "'\\''"));
+    format!("{} attach-session -t {quoted}", tmux_bin())
+}
+
+/// Escape a string for use inside an AppleScript double-quoted literal.
+#[cfg(target_os = "macos")]
+fn applescript_str(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(target_os = "macos")]
+fn osascript(lines: &[String]) -> Result<(), String> {
+    let mut cmd = Command::new("osascript");
+    for l in lines {
+        cmd.arg("-e").arg(l);
+    }
+    let out = cmd.stdin(Stdio::null()).output().map_err(|e| format!("could not run osascript: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_terminal_app(name: &str) -> Result<(), String> {
+    let line = applescript_str(&attach_shell_line(name));
+    osascript(&[
+        "tell application \"Terminal\"".into(),
+        "activate".into(),
+        format!("do script \"{line}\""),
+        "end tell".into(),
+    ])
+}
+
+#[cfg(target_os = "macos")]
+fn mac_iterm(name: &str) -> Result<(), String> {
+    let line = applescript_str(&attach_shell_line(name));
+    osascript(&[
+        "tell application \"iTerm\"".into(),
+        "activate".into(),
+        "set w to (create window with default profile)".into(),
+        format!("tell current session of w to write text \"{line}\""),
+        "end tell".into(),
+    ])
 }

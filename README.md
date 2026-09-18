@@ -24,7 +24,7 @@ tmux sessions that belong to no project are listed under "Unassigned tmux sessio
 
 ## Install
 
-Requirements: Linux with X11 or Wayland, `tmux`, a terminal emulator, and a Rust toolchain ([rustup](https://rustup.rs)).
+Requirements: Linux (X11 or Wayland) or macOS, `tmux`, a terminal emulator, and a Rust toolchain ([rustup](https://rustup.rs)).
 
 ```sh
 git clone https://github.com/mark-kimura/muxboard.git
@@ -52,6 +52,18 @@ Terminal=false
 Categories=Utility;
 ```
 
+### macOS
+
+```sh
+brew install tmux
+git clone https://github.com/mark-kimura/muxboard.git
+cd muxboard
+./scripts/make-app.sh      # builds target/Muxboard.app
+open target/Muxboard.app   # or drag it into /Applications
+```
+
+Sessions open in iTerm2 if it is installed, otherwise in Terminal. Set "Terminal program" in Settings to `Terminal`, `iTerm`, `kitty`, `alacritty`, or `wezterm` to choose. The first time, macOS asks for permission to control Terminal or iTerm; allow it. "Open folder" opens Finder. Config lives in `~/Library/Application Support/muxboard/`.
+
 ## Settings
 
 The gear button opens Settings:
@@ -61,7 +73,7 @@ The gear button opens Settings:
 
 "Edit project" on a project's right-click menu sets its name, folder, and a start command that overrides the default.
 
-Files: `~/.config/muxboard/projects.json` and `~/.config/muxboard/settings.json`. Set `MUXBOARD_CONFIG_DIR` to use a different folder. `MUXBOARD_EXPANDED=1` starts with the preview panel open.
+Files (Linux): `~/.config/muxboard/projects.json` and `~/.config/muxboard/settings.json`. Set `MUXBOARD_CONFIG_DIR` to use a different folder. `MUXBOARD_EXPANDED=1` starts with the preview panel open.
 
 ## How it works
 

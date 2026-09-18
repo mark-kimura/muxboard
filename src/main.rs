@@ -1214,7 +1214,15 @@ impl App {
             }
             Dialog::NewWindow { session, name } => {
                 let n = name.trim();
-                let r = tmux::new_window(session, if n.is_empty() { None } else { Some(n) });
+                // Start in the project's folder, or for an unassigned session the folder it was started in.
+                let dir = self
+                    .matched
+                    .iter()
+                    .find(|(_, s)| *s == session)
+                    .and_then(|(key, _)| self.project_at(key))
+                    .map(|p| p.path.to_string_lossy().into_owned())
+                    .or_else(|| self.session(session).map(|s| s.path.clone()));
+                let r = tmux::new_window(session, if n.is_empty() { None } else { Some(n) }, dir.as_deref());
                 if r.is_ok() {
                     self.collapsed.remove(session);
                 }

@@ -199,10 +199,17 @@ pub fn attach_in_terminal(name: &str, preferred: Option<&str>) -> Result<(), Str
 
 // ---- windows ----
 
-pub fn new_window(session: &str, name: Option<&str>) -> Result<(), String> {
-    let mut args = vec!["new-window", "-t", session];
+/// Add a window to the session. `dir` is the folder it starts in; without it tmux would use the
+/// folder Muxdock itself was started from (the home folder when launched from a menu).
+pub fn new_window(session: &str, name: Option<&str>, dir: Option<&str>) -> Result<(), String> {
+    // A trailing colon means "the next free window index in this session".
+    let target = format!("{session}:");
+    let mut args = vec!["new-window", "-t", target.as_str()];
     if let Some(n) = name.filter(|n| !n.trim().is_empty()) {
         args.extend(["-n", n]);
+    }
+    if let Some(d) = dir.filter(|d| !d.trim().is_empty()) {
+        args.extend(["-c", d]);
     }
     run(&args).map(|_| ())
 }

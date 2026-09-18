@@ -14,6 +14,9 @@ const REFRESH_EVERY: Duration = Duration::from_millis(1000);
 const RED: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 const GREEN: egui::Color32 = egui::Color32::from_rgb(90, 190, 110);
 const YELLOW: egui::Color32 = egui::Color32::from_rgb(230, 190, 60);
+/// Text of rows that are not running or not active: readable grey, and near-white on the selection highlight.
+const QUIET_TEXT: egui::Color32 = egui::Color32::from_gray(160);
+const QUIET_TEXT_SELECTED: egui::Color32 = egui::Color32::from_gray(225);
 /// Window width when only the project list is shown, and the full size when the detail panel is open.
 const DEFAULT_LIST_WIDTH: f32 = 300.0;
 const MIN_LIST_WIDTH: f32 = 180.0;
@@ -598,7 +601,7 @@ impl App {
                 ui.painter().circle_filled(c, 4.5, YELLOW);
             }
             None => {
-                ui.painter().circle_stroke(c, 4.5, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
+                ui.painter().circle_stroke(c, 4.5, egui::Stroke::new(1.0, QUIET_TEXT));
             }
         }
     }
@@ -635,7 +638,7 @@ impl App {
             // Running projects in full strength; not-running ones dimmed.
             let mut text = egui::RichText::new(&p.name).strong();
             if session.is_none() {
-                text = egui::RichText::new(&p.name).weak();
+                text = egui::RichText::new(&p.name).color(if is_sel { QUIET_TEXT_SELECTED } else { QUIET_TEXT });
             }
             let hover = match &sess {
                 Some(s) => format!(
@@ -766,7 +769,7 @@ impl App {
             }
             let mut text = egui::RichText::new(&w.name);
             if !w.active {
-                text = text.weak();
+                text = text.color(if is_sel { QUIET_TEXT_SELECTED } else { QUIET_TEXT });
             }
             let resp = Self::row_label(ui, is_sel, text)
                 .on_hover_text(format!(

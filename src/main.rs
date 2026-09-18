@@ -1371,7 +1371,6 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Muxdock")
-            .with_app_id("muxdock")
             .with_icon(
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
                     .expect("the bundled icon is a valid PNG"),

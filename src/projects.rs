@@ -33,12 +33,12 @@ impl Project {
     }
 }
 
-/// The config folder: `$MUXBOARD_CONFIG_DIR` if set, else `~/.config/muxboard`.
+/// The config folder: `$MUXDOCK_CONFIG_DIR` if set, else `~/.config/muxdock`.
 pub fn config_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("MUXBOARD_CONFIG_DIR") {
+    if let Some(d) = std::env::var_os("MUXDOCK_CONFIG_DIR") {
         return PathBuf::from(d);
     }
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("muxboard")
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("muxdock")
 }
 
 pub fn config_path() -> PathBuf {

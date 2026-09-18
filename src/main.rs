@@ -73,8 +73,8 @@ impl App {
             settings: projects::load_settings(),
             expanded_size: EXPANDED_SIZE,
             list_width: DEFAULT_LIST_WIDTH,
-            // MUXBOARD_EXPANDED=1 starts with the preview panel open.
-            detail_open: std::env::var("MUXBOARD_EXPANDED").map(|v| v == "1").unwrap_or(false),
+            // MUXDOCK_EXPANDED=1 starts with the preview panel open.
+            detail_open: std::env::var("MUXDOCK_EXPANDED").map(|v| v == "1").unwrap_or(false),
             ..Default::default()
         }
     }
@@ -1370,8 +1370,8 @@ impl eframe::App for App {
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Muxboard")
-            .with_inner_size(if std::env::var("MUXBOARD_EXPANDED").map(|v| v == "1").unwrap_or(false) {
+            .with_title("Muxdock")
+            .with_inner_size(if std::env::var("MUXDOCK_EXPANDED").map(|v| v == "1").unwrap_or(false) {
                 [EXPANDED_SIZE.x, EXPANDED_SIZE.y]
             } else {
                 [DEFAULT_LIST_WIDTH + TAB_WIDTH, EXPANDED_SIZE.y]
@@ -1380,7 +1380,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "muxboard",
+        "muxdock",
         options,
         Box::new(|cc| {
             install_fonts(&cc.egui_ctx);

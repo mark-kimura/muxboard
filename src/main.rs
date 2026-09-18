@@ -739,29 +739,30 @@ impl App {
             ui.add_space(30.0);
             // Active window: small filled square in the selection colour. Others: faint outline.
             let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 18.0), egui::Sense::hover());
-            // While the program in the window is producing output, the marker breathes: it swells and
-            // brightens about every 1.6 seconds, and a faint outline spreads outward and fades.
-            let accent = egui::Color32::from_rgb(70, 160, 230);
-            if w.is_working() {
+            // While the program in the window is producing output, the marker slowly fades between
+            // dim and bright, one cycle about every 2 seconds. Same size and shape as when still.
+            let sq = egui::Rect::from_center_size(rect.center(), egui::vec2(7.0, 7.0));
+            let fade = if w.is_working() {
+                ui.ctx().request_repaint_after(Duration::from_millis(50));
                 let t = ui.input(|i| i.time);
-                let phase = ((t * std::f64::consts::TAU / 1.6).sin() * 0.5 + 0.5) as f32; // 0..1
-                let ring = (t / 1.6).fract() as f32; // 0..1, restarts each breath
-                let halo = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(7.0 + 8.0 * ring));
-                ui.painter().rect_stroke(halo, 2.0, egui::Stroke::new(1.5, accent.gamma_multiply(0.5 * (1.0 - ring))));
-                let sq = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(6.0 + 2.5 * phase));
-                if w.active {
-                    ui.painter().rect_filled(sq, 1.0, accent.gamma_multiply(0.6 + 0.4 * phase));
-                } else {
-                    ui.painter().rect_stroke(sq, 1.0, egui::Stroke::new(1.5, accent.gamma_multiply(0.6 + 0.4 * phase)));
-                }
-                ui.ctx().request_repaint_after(Duration::from_millis(33));
+                Some(((t * std::f64::consts::TAU / 2.0).sin() * 0.5 + 0.5) as f32) // 0..1
             } else {
-                let sq = egui::Rect::from_center_size(rect.center(), egui::vec2(7.0, 7.0));
-                if w.active {
-                    ui.painter().rect_filled(sq, 1.0, ui.visuals().selection.bg_fill);
-                } else {
-                    ui.painter().rect_stroke(sq, 1.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
-                }
+                None
+            };
+            if w.active {
+                let base = ui.visuals().selection.bg_fill;
+                let color = match fade {
+                    Some(f) => egui::Color32::from_rgb(70, 160, 230).gamma_multiply(0.45 + 0.55 * f),
+                    None => base,
+                };
+                ui.painter().rect_filled(sq, 1.0, color);
+            } else {
+                let base = ui.visuals().weak_text_color();
+                let color = match fade {
+                    Some(f) => ui.visuals().text_color().gamma_multiply(0.35 + 0.65 * f),
+                    None => base,
+                };
+                ui.painter().rect_stroke(sq, 1.0, egui::Stroke::new(1.0, color));
             }
             let mut text = egui::RichText::new(&w.name);
             if !w.active {

@@ -586,33 +586,20 @@ impl App {
         });
     }
 
-    /// The status dot of a project or session. `pulsing` makes it breathe while a program
-    /// in one of its windows is producing output.
-    fn status_dot(ui: &mut egui::Ui, session: Option<&Session>, pulsing: bool) {
+    /// The status dot of a project or session: green with a terminal open, yellow without, faint ring when idle.
+    fn status_dot(ui: &mut egui::Ui, session: Option<&Session>) {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 18.0), egui::Sense::hover());
         let c = rect.center();
-        let color = match session {
-            Some(s) if s.attached => GREEN,
-            Some(_) => YELLOW,
+        match session {
+            Some(s) if s.attached => {
+                ui.painter().circle_filled(c, 4.5, GREEN);
+            }
+            Some(_) => {
+                ui.painter().circle_filled(c, 4.5, YELLOW);
+            }
             None => {
                 ui.painter().circle_stroke(c, 4.5, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
-                return;
             }
-        };
-        if pulsing {
-            // One slow breath about every 1.6 seconds: the dot swells slightly and a faint ring fades outward.
-            let t = ui.input(|i| i.time);
-            let phase = ((t * std::f64::consts::TAU / 1.6).sin() * 0.5 + 0.5) as f32; // 0..1
-            let ring = ((t / 1.6).fract()) as f32; // 0..1, restarts each breath
-            ui.painter().circle_stroke(
-                c,
-                4.5 + 4.0 * ring,
-                egui::Stroke::new(1.5, color.gamma_multiply(0.45 * (1.0 - ring))),
-            );
-            ui.painter().circle_filled(c, 3.9 + 1.3 * phase, color.gamma_multiply(0.65 + 0.35 * phase));
-            ui.ctx().request_repaint_after(Duration::from_millis(33));
-        } else {
-            ui.painter().circle_filled(c, 4.5, color);
         }
     }
 
@@ -644,8 +631,7 @@ impl App {
                 // Reserve exactly the arrow's width so rows line up whether or not they expand.
                 ui.add_visible(false, egui::Button::new("⏷").frame(false));
             }
-            let working = session.map(|n| self.windows_of(n).iter().any(|w| w.is_working())).unwrap_or(false);
-            Self::status_dot(ui, sess.as_ref(), working);
+            Self::status_dot(ui, sess.as_ref());
             // Running projects in full strength; not-running ones dimmed.
             let mut text = egui::RichText::new(&p.name).strong();
             if session.is_none() {
@@ -708,8 +694,7 @@ impl App {
             if ui.add(egui::Button::new(arrow).frame(false)).clicked() {
                 toggle = true;
             }
-            let working = self.windows_of(&s.name).iter().any(|w| w.is_working());
-            Self::status_dot(ui, Some(s), working);
+            Self::status_dot(ui, Some(s));
             let text = egui::RichText::new(&s.name).strong();
             let resp = Self::row_label(ui, is_sel, text)
                 .on_hover_text(format!(
@@ -754,11 +739,29 @@ impl App {
             ui.add_space(30.0);
             // Active window: small filled square in the selection colour. Others: faint outline.
             let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 18.0), egui::Sense::hover());
-            let sq = egui::Rect::from_center_size(rect.center(), egui::vec2(7.0, 7.0));
-            if w.active {
-                ui.painter().rect_filled(sq, 1.0, ui.visuals().selection.bg_fill);
+            // While the program in the window is producing output, the marker breathes: it swells and
+            // brightens about every 1.6 seconds, and a faint outline spreads outward and fades.
+            let accent = egui::Color32::from_rgb(70, 160, 230);
+            if w.is_working() {
+                let t = ui.input(|i| i.time);
+                let phase = ((t * std::f64::consts::TAU / 1.6).sin() * 0.5 + 0.5) as f32; // 0..1
+                let ring = (t / 1.6).fract() as f32; // 0..1, restarts each breath
+                let halo = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(7.0 + 8.0 * ring));
+                ui.painter().rect_stroke(halo, 2.0, egui::Stroke::new(1.5, accent.gamma_multiply(0.5 * (1.0 - ring))));
+                let sq = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(6.0 + 2.5 * phase));
+                if w.active {
+                    ui.painter().rect_filled(sq, 1.0, accent.gamma_multiply(0.6 + 0.4 * phase));
+                } else {
+                    ui.painter().rect_stroke(sq, 1.0, egui::Stroke::new(1.5, accent.gamma_multiply(0.6 + 0.4 * phase)));
+                }
+                ui.ctx().request_repaint_after(Duration::from_millis(33));
             } else {
-                ui.painter().rect_stroke(sq, 1.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
+                let sq = egui::Rect::from_center_size(rect.center(), egui::vec2(7.0, 7.0));
+                if w.active {
+                    ui.painter().rect_filled(sq, 1.0, ui.visuals().selection.bg_fill);
+                } else {
+                    ui.painter().rect_stroke(sq, 1.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
+                }
             }
             let mut text = egui::RichText::new(&w.name);
             if !w.active {

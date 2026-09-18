@@ -586,34 +586,39 @@ impl App {
         });
     }
 
-    fn status_dot(ui: &mut egui::Ui, session: Option<&Session>) {
+    /// The status dot of a project or session. `pulsing` makes it breathe while a program
+    /// in one of its windows is producing output.
+    fn status_dot(ui: &mut egui::Ui, session: Option<&Session>, pulsing: bool) {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 18.0), egui::Sense::hover());
         let c = rect.center();
-        match session {
-            Some(s) if s.attached => {
-                ui.painter().circle_filled(c, 4.5, GREEN);
-            }
-            Some(_) => {
-                ui.painter().circle_filled(c, 4.5, YELLOW);
-            }
+        let color = match session {
+            Some(s) if s.attached => GREEN,
+            Some(_) => YELLOW,
             None => {
                 ui.painter().circle_stroke(c, 4.5, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
+                return;
             }
+        };
+        if pulsing {
+            // One slow breath about every 1.6 seconds: the dot swells slightly and a faint ring fades outward.
+            let t = ui.input(|i| i.time);
+            let phase = ((t * std::f64::consts::TAU / 1.6).sin() * 0.5 + 0.5) as f32; // 0..1
+            let ring = ((t / 1.6).fract()) as f32; // 0..1, restarts each breath
+            ui.painter().circle_stroke(
+                c,
+                4.5 + 4.0 * ring,
+                egui::Stroke::new(1.5, color.gamma_multiply(0.45 * (1.0 - ring))),
+            );
+            ui.painter().circle_filled(c, 3.9 + 1.3 * phase, color.gamma_multiply(0.65 + 0.35 * phase));
+            ui.ctx().request_repaint_after(Duration::from_millis(33));
+        } else {
+            ui.painter().circle_filled(c, 4.5, color);
         }
     }
 
-    /// A full-width selectable row label; when `working`, a small spinner sits at its right end.
-    fn row_label(ui: &mut egui::Ui, selected: bool, text: impl Into<egui::WidgetText>, working: bool) -> egui::Response {
-        const SPINNER: f32 = 14.0;
-        let reserve = if working { SPINNER + 8.0 } else { 0.0 };
-        let size = egui::vec2((ui.available_width() - reserve).max(20.0), ui.spacing().interact_size.y);
-        let resp = ui
-            .allocate_ui_with_layout(size, Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(selected, text)))
-            .inner;
-        if working {
-            ui.add(egui::Spinner::new().size(SPINNER)).on_hover_text("Working: its screen is changing");
-        }
-        resp
+    /// A full-width selectable row label.
+    fn row_label(ui: &mut egui::Ui, selected: bool, text: impl Into<egui::WidgetText>) -> egui::Response {
+        ui.with_layout(Self::row_layout(), |ui| ui.add(egui::SelectableLabel::new(selected, text))).inner
     }
 
     fn row_layout() -> egui::Layout {
@@ -639,7 +644,8 @@ impl App {
                 // Reserve exactly the arrow's width so rows line up whether or not they expand.
                 ui.add_visible(false, egui::Button::new("⏷").frame(false));
             }
-            Self::status_dot(ui, sess.as_ref());
+            let working = session.map(|n| self.windows_of(n).iter().any(|w| w.is_working())).unwrap_or(false);
+            Self::status_dot(ui, sess.as_ref(), working);
             // Running projects in full strength; not-running ones dimmed.
             let mut text = egui::RichText::new(&p.name).strong();
             if session.is_none() {
@@ -659,7 +665,7 @@ impl App {
                 ),
             };
             let hover = if self.settings.sort == SortMode::Manual { format!("{hover}\nDrag: reorder") } else { hover };
-            let resp = Self::row_label(ui, is_sel, text, false).on_hover_text(hover);
+            let resp = Self::row_label(ui, is_sel, text).on_hover_text(hover);
             if resp.clicked() {
                 clicked = true;
             }
@@ -702,9 +708,10 @@ impl App {
             if ui.add(egui::Button::new(arrow).frame(false)).clicked() {
                 toggle = true;
             }
-            Self::status_dot(ui, Some(s));
+            let working = self.windows_of(&s.name).iter().any(|w| w.is_working());
+            Self::status_dot(ui, Some(s), working);
             let text = egui::RichText::new(&s.name).strong();
-            let resp = Self::row_label(ui, is_sel, text, false)
+            let resp = Self::row_label(ui, is_sel, text)
                 .on_hover_text(format!(
                     "{}\n{}\n{} window{}\nCreated {}\n\nDouble-click: open in terminal\nRight-click: more",
                     s.path,
@@ -757,7 +764,7 @@ impl App {
             if !w.active {
                 text = text.weak();
             }
-            let resp = Self::row_label(ui, is_sel, text, w.is_working())
+            let resp = Self::row_label(ui, is_sel, text)
                 .on_hover_text(format!(
                     "Window {}: {}\nRunning: {}{}\n\nDouble-click: show this window in the terminal\nRight-click: more",
                     w.index,

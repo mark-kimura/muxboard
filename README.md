@@ -39,7 +39,12 @@ On Debian/Ubuntu/Mint the GUI library needs these packages to build:
 sudo apt install build-essential pkg-config libgtk-3-dev libxkbcommon-dev libssl-dev
 ```
 
-To add it to the desktop menu, create `~/.local/share/applications/muxdock.desktop`:
+To add it to the desktop menu, install the icon and create `~/.local/share/applications/muxdock.desktop`:
+
+```sh
+install -Dm644 assets/icon.png ~/.local/share/icons/hicolor/256x256/apps/muxdock.png
+```
+
 
 ```ini
 [Desktop Entry]
@@ -47,7 +52,8 @@ Type=Application
 Name=Muxdock
 Comment=Start and manage tmux sessions per project
 Exec=/full/path/to/muxdock/target/release/muxdock
-Icon=utilities-terminal
+Icon=muxdock
+StartupWMClass=muxdock
 Terminal=false
 Categories=Utility;
 ```

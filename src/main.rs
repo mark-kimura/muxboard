@@ -659,8 +659,7 @@ impl App {
                 ),
             };
             let hover = if self.settings.sort == SortMode::Manual { format!("{hover}\nDrag: reorder") } else { hover };
-            let working = session.map(|n| self.windows_of(n).iter().any(|w| w.is_working())).unwrap_or(false);
-            let resp = Self::row_label(ui, is_sel, text, working).on_hover_text(hover);
+            let resp = Self::row_label(ui, is_sel, text, false).on_hover_text(hover);
             if resp.clicked() {
                 clicked = true;
             }
@@ -705,8 +704,7 @@ impl App {
             }
             Self::status_dot(ui, Some(s));
             let text = egui::RichText::new(&s.name).strong();
-            let working = self.windows_of(&s.name).iter().any(|w| w.is_working());
-            let resp = Self::row_label(ui, is_sel, text, working)
+            let resp = Self::row_label(ui, is_sel, text, false)
                 .on_hover_text(format!(
                     "{}\n{}\n{} window{}\nCreated {}\n\nDouble-click: open in terminal\nRight-click: more",
                     s.path,
